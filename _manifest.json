@@ -9,7 +9,7 @@
   },
   "license": "GPL-3.0-or-later",
   "urls": {
-    "repository": "https://github.com/xiexiaojia780/date-context-plugin"
+    "repository": "https://github.com/xiexiaojia780/date_context_plugin"
   },
   "host_application": {
     "min_version": "1.0.0",
@@ -39,5 +39,5 @@
       "zh-CN"
     ]
   },
-  "id": "xiexiaojia780.date-context-plugin"
+  "id": "github.xiexiaojia780.date-context-plugin"
 }
