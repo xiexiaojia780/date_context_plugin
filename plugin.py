@@ -118,7 +118,7 @@ class DateContextPlugin(MaiBotPlugin):
         self.ctx.logger.info("日期上下文注入插件已加载")
 
     async def on_unload(self) -> None:
-        """处理插件卸载"""
+        """处理插件卸载（本插件无定时任务/连接/文件句柄等需要清理的资源）"""
 
     async def on_config_update(self, scope: str, config_data: dict[str, Any], version: str) -> None:
         """处理配置热重载事件"""

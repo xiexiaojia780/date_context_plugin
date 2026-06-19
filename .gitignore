@@ -1,0 +1,18 @@
+# Python 字节码缓存
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 类型检查器缓存
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# 编辑器 / IDE
+.vscode/
+.idea/
+*.swp
+
+# 系统文件
+.DS_Store
+Thumbs.db
