@@ -1,0 +1,43 @@
+{
+  "manifest_version": 2,
+  "version": "1.1.0",
+  "name": "日期上下文注入插件",
+  "description": "在每次模型请求前向上下文最顶部注入当前日期、星期、农历、节日与节气，让 bot 始终知道现在是哪天、是否放假调休",
+  "author": {
+    "name": "xiexiaojia780",
+    "url": "https://github.com/xiexiaojia780"
+  },
+  "license": "GPL-v3.0-or-later",
+  "urls": {
+    "repository": "https://github.com/xiexiaojia780/date-context-plugin"
+  },
+  "host_application": {
+    "min_version": "1.0.0",
+    "max_version": "1.0.0"
+  },
+  "sdk": {
+    "min_version": "2.0.0",
+    "max_version": "2.99.99"
+  },
+  "dependencies": [
+    {
+      "type": "python_package",
+      "name": "cnlunar",
+      "version_spec": ">=0.2.4"
+    },
+    {
+      "type": "python_package",
+      "name": "chinese-calendar",
+      "version_spec": ">=1.11.0"
+    }
+  ],
+  "capabilities": [],
+  "i18n": {
+    "default_locale": "zh-CN",
+    "locales_path": "_locales",
+    "supported_locales": [
+      "zh-CN"
+    ]
+  },
+  "id": "xiexiaojia780.date-context-plugin"
+}
