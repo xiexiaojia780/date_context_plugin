@@ -1,0 +1,13 @@
+[plugin]
+enabled = true
+config_version = "1.1.0"
+
+[date]
+timezone = "Asia/Shanghai"
+datetime_format = "%Y年%m月%d日 %H:%M"
+include_lunar = true
+include_traditional_festivals = true
+include_statutory_holidays = true
+include_solar_terms = true
+include_western_festivals = true
+template = "【当前真实时间】现在是 {datetime} {weekday}{lunar}。{festivals}回复时如涉及日期、时间、节日等请以此为准。"
