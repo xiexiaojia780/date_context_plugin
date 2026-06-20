@@ -89,7 +89,7 @@ class DateInjectionConfig(PluginConfigBase):
     __ui_order__ = 1
 
     timezone: str = Field(default="Asia/Shanghai", description="计算当前日期所用的时区（IANA 名称，如 Asia/Shanghai）")
-    datetime_format: str = Field(default="%Y年%m月%d日 %H:%M", description="日期时间格式（strftime），不含星期")
+    datetime_format: str = Field(default="%Y年%m月%d日", description="日期格式（strftime），不含星期")
     include_lunar: bool = Field(default=True, description="是否附带农历日期")
     include_traditional_festivals: bool = Field(default=True, description="是否附带传统农历节日（春节/端午/中秋等）")
     include_statutory_holidays: bool = Field(default=True, description="是否附带法定节假日放假/调休补班信息")
@@ -154,9 +154,16 @@ class DateContextPlugin(MaiBotPlugin):
 
         context_text = self._build_context_text()
 
-        # 在消息列表最顶部插入一条 system 消息
+        # 在现有 system 消息之后插入，避免破坏缓存前缀
+        # （若插在最顶部，每分钟变化的日期会导致 DeepSeek 自动前缀缓存全量失效）
         new_messages = list(messages)
-        new_messages.insert(0, {"role": "system", "content": context_text})
+        insert_pos = 0
+        for i, msg in enumerate(messages):
+            if isinstance(msg, dict) and msg.get("role") == "system":
+                insert_pos = i + 1
+            else:
+                break
+        new_messages.insert(insert_pos, {"role": "system", "content": context_text})
 
         return {"action": "continue", "modified_kwargs": {"messages": new_messages}}
 
