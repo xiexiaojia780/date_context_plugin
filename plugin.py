@@ -1,11 +1,11 @@
 """日期上下文注入插件
 
-在 Maisaka 回复器构建完模型请求后，向发送给 LLM 的消息列表最顶部注入一条
+在 Maisaka 回复器构建完模型请求后，向消息列表中已有 system 消息之后注入一条
 包含"当前日期 / 星期 / 农历 / 节日 / 节气"的系统消息，让 bot 始终知道现在
 是哪天、是不是节日、有没有放假调休
 实现方式：订阅 ``maisaka.replyer.before_model_request`` Hook（阻塞模式），
-读取 Hook 传入的序列化 ``messages``，在最顶部插入一条 system 消息后通过
-``modified_kwargs`` 返回，由 Host 反序列化为最终模型请求
+读取 Hook 传入的序列化 ``messages``，在已有 system 消息之后插入一条 system
+消息后通过 ``modified_kwargs`` 返回，由 Host 反序列化为最终模型请求
 节日数据来源：
 - 农历日期、节气、传统节日落点：``cnlunar``
 - 法定节假日放假 / 调休补班判定：``chinese_calendar``（数据有年份覆盖上限，
@@ -96,7 +96,7 @@ class DateInjectionConfig(PluginConfigBase):
     include_solar_terms: bool = Field(default=True, description="是否附带 24 节气信息")
     include_western_festivals: bool = Field(default=True, description="是否附带常见公历/西方节日（情人节/圣诞节等）")
     template: str = Field(
-        default="【当前真实时间】现在是 {datetime} {weekday}{lunar}。{festivals}回复时如涉及日期、时间、节日等请以此为准。",
+        default="【当前日期】现在是 {datetime} {weekday}{lunar}。{festivals}回复时如涉及日期、节日等请以此为准。",
         description="注入到上下文的文本模板，可使用占位符 {datetime} {weekday} {lunar} {festivals}",
     )
 
@@ -129,7 +129,7 @@ class DateContextPlugin(MaiBotPlugin):
     @HookHandler(
         "maisaka.replyer.before_model_request",
         name="inject_date_context",
-        description="向模型请求最顶部注入当前日期/星期/农历/节日/节气上下文",
+        description="向模型请求注入当前日期/星期/农历/节日/节气上下文",
         mode=HookMode.BLOCKING,
         order=HookOrder.NORMAL,
         error_policy=ErrorPolicy.SKIP,
