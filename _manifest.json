@@ -1,6 +1,6 @@
 {
   "manifest_version": 2,
-  "version": "1.1.0",
+  "version": "1.2.0",
   "name": "日期上下文注入插件",
   "description": "在每次模型请求前向上下文最顶部注入当前日期、星期、农历、节日与节气，让 bot 始终知道现在是哪天、是否放假调休",
   "author": {
