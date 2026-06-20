@@ -3,7 +3,7 @@
 > 在每次模型请求前，向上下文最顶部注入"当前日期 / 星期 / 农历 / 节日 / 节气 / 是否调休"，让 bot 始终知道现在是哪天。
 
 - **插件 ID**：`xiexiaojia780.date-context-plugin`
-- **版本**：1.1.0
+- **版本**：1.2.0
 - **作者**：[xiexiaojia780](https://github.com/xiexiaojia780)
 - **License**：GPL-v3.0-or-later
 - **Hook**：`maisaka.replyer.before_model_request`（BLOCKING / NORMAL / SKIP）
