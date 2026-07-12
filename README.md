@@ -5,9 +5,22 @@
 - **插件 ID**：`github.xiexiaojia780.date-context-plugin`
 - **版本**：1.3.0
 - **作者**：[xiexiaojia780](https://github.com/xiexiaojia780)
-- **License**：GPL-v3.0-or-later
+- **License**：`GPL-3.0-or-later`（与 `_manifest.json` / 根目录 `LICENSE` 一致，GNU GPLv3）
 - **Hook**：`maisaka.replyer.before_model_request`（BLOCKING / NORMAL / SKIP）
 - **公开 API**：`get_date_context` / `get_date_text`（实现见 `date_api.py`）
+
+## 仓库结构
+
+```
+date_context_plugin/
+├── _manifest.json   # 插件元数据与依赖声明
+├── plugin.py        # 入口：Hook 注入 + 混入公开 API
+├── date_api.py      # 独立公开 API 模块
+├── config.toml      # 默认配置示例
+├── README.md
+├── LICENSE          # GPL-3.0-or-later
+└── _locales/        # i18n 占位
+```
 
 ## 功能
 
@@ -66,18 +79,23 @@ result = await self.ctx.api.call(
 
 ## 安装
 
-将插件目录放到 MaiBot 的插件目录下，依赖会按 `_manifest.json` 自动安装。如需手动安装：
+1. 将本目录放到 MaiBot 的plugins目录下。
+2. 重启 MaiBot 或等待其热重载插件。
+3. **Python 依赖无需手动安装**：`_manifest.json` 已声明，Host 加载时会按 `python_package` 自动安装。
+
+若需在开发环境手动安装（可选）：
 
 ```bash
 pip install "cnlunar>=0.2.4" "chinese-calendar>=1.11.0"
 ```
 
-依赖说明：
+依赖说明（与 manifest 一致）：
 
-| 包 | 用途 |
-|---|---|
-| `cnlunar` | 农历日期、节气、传统节日落点 |
-| `chinese-calendar` | 法定节假日 / 调休补班判定 |
+| 包 | 用途 | 声明位置 |
+|---|---|---|
+| `cnlunar>=0.2.4` | 农历日期、节气、传统节日落点 | `_manifest.json` → `dependencies` |
+| `chinese-calendar>=1.11.0` | 法定节假日 / 调休补班判定 | `_manifest.json` → `dependencies` |
+| `maibot-plugin-sdk`（`maibot_sdk`） | 插件运行时 | Host 自带，插件不重复声明 |
 
 ## 启用
 
@@ -123,6 +141,18 @@ template = "【当前日期】现在是 {datetime} {weekday}{lunar}。{festivals
 
 - **Hook**：自动在模型请求前注入日期上下文（对用户不可见）
 - **公开 API**：供其他插件调用 `get_date_context` / `get_date_text`
+
+## 权限 / 能力说明
+
+| 项 | 说明 |
+|---|---|
+| `capabilities` | 空：不申请 Host 额外能力白名单 |
+| 网络 | **不发起**任何外网请求；节日/调休均本地库计算 |
+| 文件 / 数据库 | 不读写插件数据目录，无持久化状态 |
+| 消息发送 | 不主动发消息到聊天；仅改模型请求中的 `messages` |
+| Hook | 订阅 `maisaka.replyer.before_model_request`（`BLOCKING` + `ErrorPolicy.SKIP`，失败跳过注入，不阻断主流程） |
+| 公开 API | `public=True`：允许其他插件通过 `self.ctx.api.call(...)` 调用 |
+| 用户隐私 | 不采集用户消息内容，不依赖 QQ 号 / 群号 |
 
 ## 工作原理
 
@@ -177,6 +207,19 @@ DeepSeek 文档中的类似关系：
 2. 稳定人设 / 系统设定在前，动态日期在后。
 3. 非必要不要在 `datetime_format` 里加 `%H:%M` 等分钟级字段。
 
+## 故障排查
+
+| 现象 | 可能原因 | 处理 |
+|---|---|---|
+| 插件未出现在列表 | 目录缺 `_manifest.json` / `plugin.py`，或 manifest 校验失败 | 检查字段与 URL 是否为合法 `http(s)://`；看 Host 启动日志 |
+| 加载失败 `No module named 'date_api'` | 旧版本导入写法 | 使用当前仓库（`plugin.py` 已含相对导入 + 回退） |
+| 依赖安装失败 | 网络或 `cnlunar` / `chinese-calendar` 不可用 | 按「安装」节手动 pip；确认 Python ≥ 3.12 |
+| 不注入日期 | `plugin.enabled=false`，或 Hook 报错被 SKIP | 查 WebUI 开关；看日志是否有 `chinese_calendar` warning / 注入异常 |
+| 其他插件调 API 失败 | 本插件未加载，或短名冲突 | 确认本插件已启用；改用全名 `github.xiexiaojia780.date-context-plugin.get_date_context` |
+| API 返回 `error` | 插件禁用、非法时区、非法 `at` | 读返回体 `error` 字段；检查 `timezone` / `at` |
+| 调休信息缺失 | `chinese-calendar` 年份覆盖不足 | 升级 `chinese-calendar`；日志会有超范围 warning |
+| 与另一份副本冲突 | 同 `id` 的插件目录重复 | 只保留一份 `date_context_plugin`，不要同时放 api 副本 |
+
 ## 常见问题
 
 **Q：会不会破坏 DeepSeek 一类模型的前缀缓存？**
@@ -213,4 +256,12 @@ pip install --upgrade chinese-calendar
 
 不会。星期走的是内置 `_WEEKDAY_ZH` 中文映射，不依赖系统 locale。
 
+## 许可证
+
+本插件以 **GPL-3.0-or-later** 授权：
+
+- `_manifest.json` → `"license": "GPL-3.0-or-later"`
+- 根目录 `LICENSE` → GNU General Public License Version 3
+
+分发或修改时请遵循 GPLv3（或后续版本）要求。
 
