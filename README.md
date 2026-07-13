@@ -7,7 +7,7 @@
 - **作者**：[xiexiaojia780](https://github.com/xiexiaojia780)
 - **License**：`GPL-3.0-or-later`（与 `_manifest.json` / 根目录 `LICENSE` 一致，GNU GPLv3）
 - **Hook**：`maisaka.replyer.before_model_request`（BLOCKING / NORMAL / SKIP）
-- **公开 API**：`get_date_context` / `get_date_text`（实现见 `date_api.py`）
+- **公开 API**：`date` / `date_text`（实现见 `date_api.py`）
 
 ## 仓库结构
 
@@ -47,13 +47,13 @@ API 逻辑独立在 `date_api.py`，通过 `DateContextAPIMixin` 挂到插件上
 
 | API 名 | 说明 |
 |---|---|
-| `get_date_context` | 结构化日期上下文（文本 + 农历/节日/调休等） |
-| `get_date_text` | 仅返回渲染后的文本（与 Hook 模板同源） |
+| `date` | 结构化日期上下文（文本 + 农历/节日/调休等） |
+| `date_text` | 仅返回渲染后的文本（与 Hook 模板同源） |
 
 ```python
 # 推荐全名，避免短名冲突
 result = await self.ctx.api.call(
-    "github.xiexiaojia780.date-context-plugin.get_date_context"
+    "github.xiexiaojia780.date-context-plugin.date"
 )
 if isinstance(result, dict) and "error" not in result:
     text = result["text"]
@@ -62,12 +62,12 @@ if isinstance(result, dict) and "error" not in result:
 
 # 只要文本
 r = await self.ctx.api.call(
-    "github.xiexiaojia780.date-context-plugin.get_date_text"
+    "github.xiexiaojia780.date-context-plugin.date_text"
 )
 
 # 查指定日期
 result = await self.ctx.api.call(
-    "github.xiexiaojia780.date-context-plugin.get_date_context",
+    "github.xiexiaojia780.date-context-plugin.date",
     at="2026-10-01",
     timezone="Asia/Shanghai",
 )
@@ -140,7 +140,7 @@ template = "【当前日期】现在是 {datetime} {weekday}{lunar}。{festivals
 本插件不提供用户侧 `/command` 或 `@Tool`。
 
 - **Hook**：自动在模型请求前注入日期上下文（对用户不可见）
-- **公开 API**：供其他插件调用 `get_date_context` / `get_date_text`
+- **公开 API**：供其他插件调用 `date` / `date_text`
 
 ## 权限 / 能力说明
 
@@ -215,7 +215,7 @@ DeepSeek 文档中的类似关系：
 | 加载失败 `No module named 'date_api'` | 旧版本导入写法 | 使用当前仓库（`plugin.py` 已含相对导入 + 回退） |
 | 依赖安装失败 | 网络或 `cnlunar` / `chinese-calendar` 不可用 | 按「安装」节手动 pip；确认 Python ≥ 3.12 |
 | 不注入日期 | `plugin.enabled=false`，或 Hook 报错被 SKIP | 查 WebUI 开关；看日志是否有 `chinese_calendar` warning / 注入异常 |
-| 其他插件调 API 失败 | 本插件未加载，或短名冲突 | 确认本插件已启用；改用全名 `github.xiexiaojia780.date-context-plugin.get_date_context` |
+| 其他插件调 API 失败 | 本插件未加载，或短名冲突 | 确认本插件已启用；改用全名 `github.xiexiaojia780.date-context-plugin.date` |
 | API 返回 `error` | 插件禁用、非法时区、非法 `at` | 读返回体 `error` 字段；检查 `timezone` / `at` |
 | 调休信息缺失 | `chinese-calendar` 年份覆盖不足 | 升级 `chinese-calendar`；日志会有超范围 warning |
 | 与另一份副本冲突 | 同 `id` 的插件目录重复 | 只保留一份 `date_context_plugin`，不要同时放 api 副本 |

@@ -9,10 +9,10 @@
 
 其他插件调用示例::
 
-    result = await self.ctx.api.call("get_date_context")
+    result = await self.ctx.api.call("date")
     # 推荐使用全名，避免短名冲突：
     # result = await self.ctx.api.call(
-    #     "github.xiexiaojia780.date-context-plugin.get_date_context"
+    #     "github.xiexiaojia780.date-context-plugin.date"
     # )
 """
 
@@ -232,12 +232,12 @@ class DateContextAPIMixin:
     """
 
     @API(
-        "get_date_context",
+        "date",
         description="获取当前（或指定时刻）的日期/星期/农历/节日/节气上下文，供其他插件复用",
         version="1",
         public=True,
     )
-    async def api_get_date_context(
+    async def api_date(
         self,
         at: str | None = None,
         timezone: str | None = None,
@@ -275,16 +275,16 @@ class DateContextAPIMixin:
         except Exception as exc:
             logger = getattr(getattr(self, "ctx", None), "logger", None)
             if logger is not None:
-                logger.warning(f"get_date_context 失败: {exc}", exc_info=True)
+                logger.warning(f"date API 失败: {exc}", exc_info=True)
             return {"error": f"构造日期上下文失败: {exc}"}
 
     @API(
-        "get_date_text",
+        "date_text",
         description="获取渲染后的日期上下文字符串（与 Hook 注入模板同源）",
         version="1",
         public=True,
     )
-    async def api_get_date_text(
+    async def api_date_text(
         self,
         at: str | None = None,
         timezone: str | None = None,
@@ -302,7 +302,7 @@ class DateContextAPIMixin:
         """
 
         del kwargs
-        result = await self.api_get_date_context(at=at, timezone=timezone)
+        result = await self.api_date(at=at, timezone=timezone)
         if "error" in result:
             return result
         return {"text": result.get("text", "")}

@@ -6,8 +6,8 @@
 实现方式：订阅 ``maisaka.replyer.before_model_request`` Hook（阻塞模式），
 读取 Hook 传入的序列化 ``messages``，在已有 system 消息之后插入一条 system
 消息后通过 ``modified_kwargs`` 返回，由 Host 反序列化为最终模型请求
-公开 API：由独立模块 ``date_api.DateContextAPIMixin`` 提供 ``get_date_context`` /
-``get_date_text``，供其他插件通过 ``self.ctx.api.call(...)`` 复用
+公开 API：由独立模块 ``date_api.DateContextAPIMixin`` 提供 ``date`` /
+``date_text``，供其他插件通过 ``self.ctx.api.call(...)`` 复用
 节日数据来源：
 - 农历日期、节气、传统节日落点：``cnlunar``
 - 法定节假日放假 / 调休补班判定：``chinese_calendar``（数据有年份覆盖上限，
@@ -123,7 +123,7 @@ class DateContextPlugin(DateContextAPIMixin, MaiBotPlugin):
 
     async def on_load(self) -> None:
         """处理插件加载"""
-        self.ctx.logger.info("日期上下文注入插件已加载（公开 API: get_date_context / get_date_text）")
+        self.ctx.logger.info("日期上下文注入插件已加载（公开 API: date / date_text）")
 
     async def on_unload(self) -> None:
         """处理插件卸载（本插件无定时任务/连接/文件句柄等需要清理的资源）"""
