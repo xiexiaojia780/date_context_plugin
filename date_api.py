@@ -1,33 +1,41 @@
-"""日期上下文公开 API 模块
+"""日期上下文 Tool / API 模块
 
-独立模块：把「日期/农历/节日」能力以 MaiBot 公开 API 形式暴露给其他插件。
-与 Hook 注入解耦，便于单独维护；合并回主插件时只需：
-
-1. 保留本文件
-2. 让插件类混入 ``DateContextAPIMixin``
-3. 从 README 同步 API 说明
-
-其他插件调用示例::
-
-    result = await self.ctx.api.call("date")
-    # 推荐使用全名，避免短名冲突：
-    # result = await self.ctx.api.call(
-    #     "github.xiexiaojia780.date-context-plugin.date"
-    # )
+- ``@API("date" / "date_text")``：供其他插件调用，**仅返回今天**
+- ``@Tool("query_date")``：供 LLM function-calling（昨天/今天/明天，或指定 ISO 日期）
 """
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
 import cnlunar
 
-from maibot_sdk import API
+from maibot_sdk import API, Tool
+from maibot_sdk.types import ToolParameterInfo, ToolParamType
 
 # 与 plugin 内保持一致：不用 locale 的 %A
 _WEEKDAY_ZH = ("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")
+
+# 相对日别名 -> 相对今天的天数偏移
+_DAY_ALIASES: dict[str, int] = {
+    "today": 0,
+    "今天": 0,
+    "yesterday": -1,
+    "昨天": -1,
+    "tomorrow": 1,
+    "明天": 1,
+    "0": 0,
+    "-1": -1,
+    "1": 1,
+}
+
+_DAY_LABELS: dict[int, str] = {
+    -1: "昨天",
+    0: "今天",
+    1: "明天",
+}
 
 
 def resolve_now(*, timezone: str, at: str | None = None) -> datetime:
@@ -68,9 +76,52 @@ def resolve_now(*, timezone: str, at: str | None = None) -> datetime:
     return parsed.astimezone(tz)
 
 
+def parse_day_offset(day: str | int | None) -> int:
+    """解析相对日期参数为天数偏移。
+
+    Args:
+        day: ``today`` / ``昨天`` / ``明天`` / ``yesterday`` / ``tomorrow`` / ``-1`` / ``0`` / ``1``。
+
+    Returns:
+        int: 相对今天的天数偏移（昨天=-1，今天=0，明天=1）。
+
+    Raises:
+        ValueError: 无法识别时抛出。
+    """
+
+    if day is None or str(day).strip() == "":
+        return 0
+    if isinstance(day, int):
+        if day in (-1, 0, 1):
+            return day
+        raise ValueError(f"day 偏移仅支持 -1/0/1，收到: {day}")
+
+    key = str(day).strip().lower()
+    # 中文不 lower 化语义，再试原串
+    if key in _DAY_ALIASES:
+        return _DAY_ALIASES[key]
+    raw = str(day).strip()
+    if raw in _DAY_ALIASES:
+        return _DAY_ALIASES[raw]
+    # 兼容 "昨" "明" 等简写
+    short = {"昨": -1, "今": 0, "明": 1}
+    if raw in short:
+        return short[raw]
+    raise ValueError(f"无法识别 day 参数: {day}（可用：今天/昨天/明天 或 today/yesterday/tomorrow）")
+
+
+def _relabel_phrase(phrase: str, day_label: str) -> str:
+    """把短语里的「今天」换成相对日标签。"""
+
+    if day_label == "今天":
+        return phrase
+    return phrase.replace("今天", day_label)
+
+
 def build_date_context_from_plugin(
     plugin: Any,
     *,
+    day: str | int | None = None,
     at: str | None = None,
     timezone: str | None = None,
     include_lunar: bool | None = None,
@@ -81,11 +132,13 @@ def build_date_context_from_plugin(
 ) -> dict[str, Any]:
     """基于插件实例构造结构化日期上下文。
 
-    复用插件已有的节日/农历判定方法，保证 API 返回与 Hook 注入逻辑一致。
-    include_* 为 None 时沿用插件配置；传入时仅影响本次 API 返回，不改配置。
+    复用插件已有的节日/农历判定方法，保证 Tool 与 Hook 判定逻辑一致。
+    - 若提供 ``at``：按该绝对日期查询，``day`` 仅作展示标签（默认「当天」语义用今天模板词替换为该日）。
+    - 若未提供 ``at``：按 ``day`` 相对今天偏移（昨天/今天/明天）。
 
     Args:
-        plugin: DateContextPlugin 实例（需具备 config / ctx / 内部构建方法）。
+        plugin: DateContextPlugin 实例。
+        day: 相对日期别名或 -1/0/1。
         at: 可选 ISO 日期时间。
         timezone: 可选时区覆盖。
         include_*: 可选信息源开关覆盖。
@@ -99,7 +152,21 @@ def build_date_context_from_plugin(
 
     date_config = plugin.config.date
     try:
-        now = resolve_now(timezone=str(timezone or date_config.timezone), at=at)
+        base_now = resolve_now(timezone=str(timezone or date_config.timezone), at=None)
+        if at and str(at).strip():
+            now = resolve_now(timezone=str(timezone or date_config.timezone), at=at)
+            day_offset = (now.date() - base_now.date()).days
+            day_label = _DAY_LABELS.get(day_offset, "该日")
+        else:
+            day_offset = parse_day_offset(day)
+            target_date = base_now.date() + timedelta(days=day_offset)
+            now = datetime(
+                target_date.year,
+                target_date.month,
+                target_date.day,
+                tzinfo=base_now.tzinfo,
+            )
+            day_label = _DAY_LABELS.get(day_offset, "该日")
     except Exception as exc:
         return {"error": str(exc)}
 
@@ -143,6 +210,7 @@ def build_date_context_from_plugin(
     if use_statutory:
         statutory_phrase, legal_name = plugin._build_statutory_phrase(now)
         if statutory_phrase:
+            statutory_phrase = _relabel_phrase(statutory_phrase, day_label)
             phrases.append(statutory_phrase)
             statutory["phrase"] = statutory_phrase
             if "补班" in statutory_phrase:
@@ -158,14 +226,14 @@ def build_date_context_from_plugin(
     if use_traditional:
         for name in plugin._lunar_festival_names(now, lunar):
             if name not in covered:
-                phrases.append(f"今天是{name}")
+                phrases.append(f"{day_label}是{name}")
                 covered.add(name)
                 festival_names.append(name)
 
     if use_western:
         for name in plugin._solar_festival_names(now):
             if name not in covered:
-                phrases.append(f"今天是{name}")
+                phrases.append(f"{day_label}是{name}")
                 covered.add(name)
                 festival_names.append(name)
 
@@ -173,15 +241,22 @@ def build_date_context_from_plugin(
         term = lunar.todaySolarTerms
         if term and term != "无":
             solar_term = str(term)
-            phrases.append(f"今天是{term}节气")
+            phrases.append(f"{day_label}是{term}节气")
 
     festivals_text = "".join(f"{phrase}。" for phrase in phrases)
-    text = date_config.template.format(
-        datetime=datetime_str,
-        weekday=weekday,
-        lunar=lunar_text,
-        festivals=festivals_text,
-    )
+
+    # Hook 注入仍用配置 template（仅今天）；Tool 用带相对日标签的可读文本
+    if day_label == "今天" and day_offset == 0 and not (at and str(at).strip()):
+        text = date_config.template.format(
+            datetime=datetime_str,
+            weekday=weekday,
+            lunar=lunar_text,
+            festivals=festivals_text,
+        )
+    else:
+        text = f"【{day_label}】{day_label}是 {datetime_str} {weekday}{lunar_text}。{festivals_text}".rstrip()
+        if not text.endswith("。"):
+            text += "。"
 
     month_cn = lunar.lunarMonthCn
     if month_cn and month_cn[-1] in "大小":
@@ -200,6 +275,8 @@ def build_date_context_from_plugin(
 
     return {
         "text": text,
+        "day": day_label,
+        "day_offset": day_offset,
         "datetime": datetime_str,
         "weekday": weekday,
         "timezone": str(now.tzinfo) if now.tzinfo is not None else date_config.timezone,
@@ -207,7 +284,7 @@ def build_date_context_from_plugin(
         "date": now.date().isoformat(),
         "year": now.year,
         "month": now.month,
-        "day": now.day,
+        "day_of_month": now.day,
         "hour": now.hour,
         "minute": now.minute,
         "lunar": lunar_info if use_lunar else None,
@@ -221,7 +298,10 @@ def build_date_context_from_plugin(
 
 
 class DateContextAPIMixin:
-    """公开 API 混入类：挂到插件类上即可注册 API 组件。
+    """Tool + 公开 API 混入类：挂到插件类上即可注册。
+
+    - 其他插件：``@API("date" / "date_text", public=True)`` —— **仅今天**
+    - LLM：``@Tool("query_date")`` —— 昨天/今天/明天
 
     依赖宿主插件提供：
     - ``self.config.plugin.enabled``
@@ -231,15 +311,16 @@ class DateContextAPIMixin:
       ``_lunar_festival_names`` / ``_solar_festival_names``
     """
 
+    # ─── 公开 API：供其他插件调用（仅今天）────────────────────────
+
     @API(
         "date",
-        description="获取当前（或指定时刻）的日期/星期/农历/节日/节气上下文，供其他插件复用",
+        description="获取今天的结构化日期/农历/节日上下文（仅今天）",
         version="1",
         public=True,
     )
     async def api_date(
         self,
-        at: str | None = None,
         timezone: str | None = None,
         include_lunar: bool | None = None,
         include_traditional_festivals: bool | None = None,
@@ -248,23 +329,33 @@ class DateContextAPIMixin:
         include_western_festivals: bool | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """返回结构化日期上下文。
+        """返回**今天**的结构化日期上下文（插件间调用）。
+
+        其他插件示例::
+
+            result = await self.ctx.api.call(
+                "github.xiexiaojia780.date-context-plugin.date"
+            )
+            text = result["text"]
+
+        公开 API 固定为今天；若需昨天/明天，请让 LLM 使用 Tool ``query_date``。
 
         Args:
-            at: 可选 ISO 日期/时间（``2026-10-01`` / ``2026-10-01T12:00:00``）。
             timezone: 可选 IANA 时区，覆盖插件配置。
             include_*: 可选开关，覆盖插件配置。
-            **kwargs: Host 透传参数（忽略）。
+            **kwargs: Host 透传参数（忽略；若传入 day/at 也会被忽略）。
 
         Returns:
             dict[str, Any]: 成功为结构化字段；失败为 ``{"error": "..."}``。
         """
 
+        # 固定仅今天：忽略调用方传入的 day/at，避免误用
         del kwargs
         try:
             return build_date_context_from_plugin(
                 self,
-                at=at,
+                day="今天",
+                at=None,
                 timezone=timezone,
                 include_lunar=include_lunar,
                 include_traditional_festivals=include_traditional_festivals,
@@ -280,20 +371,18 @@ class DateContextAPIMixin:
 
     @API(
         "date_text",
-        description="获取渲染后的日期上下文字符串（与 Hook 注入模板同源）",
+        description="获取今天的日期渲染文本（仅今天）",
         version="1",
         public=True,
     )
     async def api_date_text(
         self,
-        at: str | None = None,
         timezone: str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """仅返回渲染文本，便于其他插件直接拼进 prompt。
+        """仅返回**今天**的渲染文本，便于其他插件拼进 prompt。
 
         Args:
-            at: 可选 ISO 日期/时间。
             timezone: 可选时区。
             **kwargs: Host 透传参数（忽略）。
 
@@ -302,7 +391,92 @@ class DateContextAPIMixin:
         """
 
         del kwargs
-        result = await self.api_date(at=at, timezone=timezone)
+        result = await self.api_date(timezone=timezone)
         if "error" in result:
             return result
         return {"text": result.get("text", "")}
+
+    # ─── LLM Tool ────────────────────────────────────────────────
+
+    @Tool(
+        "query_date",
+        description="查询今天/昨天/明天（或指定日期）的公历、星期、农历、节日、节气与是否放假调休",
+        brief_description="查询今天、昨天或明天的日期与节日信息",
+        parameters=[
+            ToolParameterInfo(
+                name="day",
+                param_type=ToolParamType.STRING,
+                description="相对日期：今天/昨天/明天，或 today/yesterday/tomorrow；默认今天",
+                required=False,
+                default="今天",
+                enum_values=["今天", "昨天", "明天", "today", "yesterday", "tomorrow"],
+            ),
+            ToolParameterInfo(
+                name="at",
+                param_type=ToolParamType.STRING,
+                description="可选绝对日期（ISO，如 2026-10-01）；若填写则优先于 day",
+                required=False,
+            ),
+        ],
+    )
+    async def tool_query_date(
+        self,
+        day: str = "今天",
+        at: str = "",
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """供 LLM 调用的日期查询工具。
+
+        组件名使用 ``query_date``，避免与公开 API 名 ``date`` 在 Host 组件表中撞名。
+
+        Args:
+            day: 相对日期别名。
+            at: 可选 ISO 日期。
+            **kwargs: Host 透传参数（忽略）。
+
+        Returns:
+            dict[str, Any]: ``{"name": "query_date", "content": "..."}`` 形式的工具结果。
+        """
+
+        del kwargs
+        try:
+            result = build_date_context_from_plugin(
+                self,
+                day=day or "今天",
+                at=at or None,
+            )
+        except Exception as exc:
+            logger = getattr(getattr(self, "ctx", None), "logger", None)
+            if logger is not None:
+                logger.warning(f"query_date Tool 失败: {exc}", exc_info=True)
+            return {"name": "query_date", "content": f"查询日期失败: {exc}"}
+
+        if "error" in result:
+            return {"name": "query_date", "content": str(result["error"])}
+
+        # 给模型一段可读摘要；关键字段附在 content 后方便引用
+        content = str(result.get("text") or "")
+        extra_parts: list[str] = []
+        if result.get("date"):
+            extra_parts.append(f"公历={result['date']}")
+        if result.get("weekday"):
+            extra_parts.append(f"星期={result['weekday']}")
+        lunar = result.get("lunar") or {}
+        if isinstance(lunar, dict) and lunar.get("month_cn"):
+            extra_parts.append(
+                f"农历={lunar.get('year_cn', '')}年{lunar.get('month_cn', '')}{lunar.get('day_cn', '')}"
+            )
+        if result.get("festival_names"):
+            extra_parts.append(f"节日={','.join(result['festival_names'])}")
+        statutory = result.get("statutory") or {}
+        if statutory.get("on_holiday"):
+            extra_parts.append(f"放假=是({statutory.get('holiday_name') or '法定节假日'})")
+        elif statutory.get("is_makeup_workday"):
+            extra_parts.append("调休补班=是")
+        if result.get("solar_term"):
+            extra_parts.append(f"节气={result['solar_term']}")
+
+        if extra_parts:
+            content = content.rstrip() + "\n" + "；".join(extra_parts)
+
+        return {"name": "query_date", "content": content}

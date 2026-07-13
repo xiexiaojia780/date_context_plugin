@@ -1,6 +1,6 @@
 [plugin]
 enabled = true
-config_version = "1.3.0"
+config_version = "1.4.0"
 
 [date]
 timezone = "Asia/Shanghai"
@@ -10,4 +10,5 @@ include_traditional_festivals = true
 include_statutory_holidays = true
 include_solar_terms = true
 include_western_festivals = true
+inject_on_model_request = false
 template = "【当前日期】现在是 {datetime} {weekday}{lunar}。{festivals}回复时如涉及日期、节日等请以此为准。"

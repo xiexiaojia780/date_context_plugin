@@ -1,13 +1,11 @@
-"""日期上下文注入插件
+"""日期上下文插件
 
-在 Maisaka 回复器构建完模型请求后，向消息列表中已有 system 消息之后注入一条
-包含"当前日期 / 星期 / 农历 / 节日 / 节气"的系统消息，让 bot 始终知道现在
-是哪天、是不是节日、有没有放假调休
-实现方式：订阅 ``maisaka.replyer.before_model_request`` Hook（阻塞模式），
-读取 Hook 传入的序列化 ``messages``，在已有 system 消息之后插入一条 system
-消息后通过 ``modified_kwargs`` 返回，由 Host 反序列化为最终模型请求
-公开 API：由独立模块 ``date_api.DateContextAPIMixin`` 提供 ``date`` /
-``date_text``，供其他插件通过 ``self.ctx.api.call(...)`` 复用
+提供：
+- 公开 API ``date`` / ``date_text``：仅返回**今天**的日期/农历/节日信息，供其他插件调用
+- LLM Tool ``query_date``：供模型查询昨天 / 今天 / 明天（或指定 ISO 日期）
+- 可选 Hook 注入：配置 ``date.inject_on_model_request`` 为 true 时，在模型请求前
+  向已有 system 消息之后插入今天的日期上下文（默认关闭，避免影响前缀缓存）
+
 节日数据来源：
 - 农历日期、节气、传统节日落点：``cnlunar``
 - 法定节假日放假 / 调休补班判定：``chinese_calendar``（数据有年份覆盖上限，
@@ -86,13 +84,13 @@ class PluginSectionConfig(PluginConfigBase):
     __ui_order__ = 0
 
     enabled: bool = Field(default=True, description="是否启用插件")
-    config_version: str = Field(default="1.3.0", description="配置版本")
+    config_version: str = Field(default="1.4.0", description="配置版本")
 
 
 class DateInjectionConfig(PluginConfigBase):
-    """日期与节日注入配置"""
+    """日期查询与可选注入配置"""
 
-    __ui_label__ = "日期注入"
+    __ui_label__ = "日期"
     __ui_icon__ = "calendar"
     __ui_order__ = 1
 
@@ -103,27 +101,35 @@ class DateInjectionConfig(PluginConfigBase):
     include_statutory_holidays: bool = Field(default=True, description="是否附带法定节假日放假/调休补班信息")
     include_solar_terms: bool = Field(default=True, description="是否附带 24 节气信息")
     include_western_festivals: bool = Field(default=True, description="是否附带常见公历/西方节日（情人节/圣诞节等）")
+    inject_on_model_request: bool = Field(
+        default=False,
+        description="是否在模型请求前自动注入今天的日期上下文（默认关闭；开启可能影响前缀缓存）",
+    )
     template: str = Field(
         default="【当前日期】现在是 {datetime} {weekday}{lunar}。{festivals}回复时如涉及日期、节日等请以此为准。",
-        description="注入到上下文的文本模板，可使用占位符 {datetime} {weekday} {lunar} {festivals}",
+        description="今天文本模板，可使用占位符 {datetime} {weekday} {lunar} {festivals}",
     )
 
 
 class DateContextPluginConfig(PluginConfigBase):
-    """日期上下文注入插件配置"""
+    """日期上下文插件配置"""
 
     plugin: PluginSectionConfig = Field(default_factory=PluginSectionConfig)
     date: DateInjectionConfig = Field(default_factory=DateInjectionConfig)
 
 
 class DateContextPlugin(DateContextAPIMixin, MaiBotPlugin):
-    """日期上下文注入插件（含 date_api 公开 API）"""
+    """日期上下文插件（可选注入 + API 仅今天 + Tool 可查昨天/今天/明天）"""
 
     config_model = DateContextPluginConfig
 
     async def on_load(self) -> None:
         """处理插件加载"""
-        self.ctx.logger.info("日期上下文注入插件已加载（公开 API: date / date_text）")
+        inject = bool(getattr(self.config.date, "inject_on_model_request", False))
+        self.ctx.logger.info(
+            "日期上下文插件已加载（inject_on_model_request=%s；API: date/date_text 仅今天；Tool: query_date）"
+            % inject
+        )
 
     async def on_unload(self) -> None:
         """处理插件卸载（本插件无定时任务/连接/文件句柄等需要清理的资源）"""
@@ -137,25 +143,27 @@ class DateContextPlugin(DateContextAPIMixin, MaiBotPlugin):
     @HookHandler(
         "maisaka.replyer.before_model_request",
         name="inject_date_context",
-        description="向模型请求注入当前日期/星期/农历/节日/节气上下文",
+        description="可选：向模型请求注入今天的日期/星期/农历/节日/节气上下文",
         mode=HookMode.BLOCKING,
         order=HookOrder.NORMAL,
         error_policy=ErrorPolicy.SKIP,
     )
     async def inject_date(self, messages: Any = None, **kwargs: Any) -> dict[str, Any] | None:
-        """在模型请求消息最顶部注入当前日期与节日信息
+        """在已有 system 消息之后注入今天的日期信息（受配置开关控制）
 
         Args:
-            messages: Host 传入的序列化消息列表，每项形如 ``{"role": ..., "content": ...}``
-            **kwargs: Hook 透传的其余上下文（session_id、task_name 等），此处不使用
+            messages: Host 传入的序列化消息列表
+            **kwargs: Hook 透传上下文（不使用）
 
         Returns:
-            dict[str, Any] | None: 改写后的 Hook 结果；未启用或消息为空时返回 ``None`` 表示放行不改
+            dict | None: 改写后的 Hook 结果；未启用注入时返回 ``None``
         """
 
         del kwargs
 
         if not self.config.plugin.enabled:
+            return None
+        if not self.config.date.inject_on_model_request:
             return None
         if not isinstance(messages, list):
             return None
@@ -163,7 +171,6 @@ class DateContextPlugin(DateContextAPIMixin, MaiBotPlugin):
         context_text = self._build_context_text()
 
         # 在现有 system 消息之后插入，避免破坏缓存前缀
-        # （若插在最顶部，每分钟变化的日期会导致 DeepSeek 自动前缀缓存全量失效）
         new_messages = list(messages)
         insert_pos = 0
         for i, msg in enumerate(messages):
@@ -176,10 +183,10 @@ class DateContextPlugin(DateContextAPIMixin, MaiBotPlugin):
         return {"action": "continue", "modified_kwargs": {"messages": new_messages}}
 
     def _build_context_text(self) -> str:
-        """构造要注入的上下文文本
+        """构造今天的上下文文本（兼容内部调用）
 
         Returns:
-            str: 渲染后的注入文本
+            str: 渲染后的文本
         """
 
         date_config = self.config.date
