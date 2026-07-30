@@ -4,7 +4,8 @@
 - 公开 API ``date`` / ``date_text``：仅返回**今天**的日期/农历/节日信息，供其他插件调用
 - LLM Tool ``query_date``：供模型查询昨天 / 今天 / 明天（或指定 ISO 日期）
 - 可选 Hook 注入：配置 ``date.inject_on_model_request`` 为 true 时，在模型请求前
-  向已有 system 消息之后插入今天的日期上下文（默认关闭，避免影响前缀缓存）
+  向已有 system 消息之后插入日期轻量上下文（星期/节日/节气/调休，不含公历/农历日期）
+  （默认关闭，避免影响前缀缓存）
 
 节日数据来源：
 - 农历日期、节气、传统节日落点：``cnlunar``
@@ -84,7 +85,7 @@ class PluginSectionConfig(PluginConfigBase):
     __ui_order__ = 0
 
     enabled: bool = Field(default=True, description="是否启用插件")
-    config_version: str = Field(default="1.4.0", description="配置版本")
+    config_version: str = Field(default="1.4.1", description="配置版本")
 
 
 class DateInjectionConfig(PluginConfigBase):
@@ -95,19 +96,19 @@ class DateInjectionConfig(PluginConfigBase):
     __ui_order__ = 1
 
     timezone: str = Field(default="Asia/Shanghai", description="计算当前日期所用的时区（IANA 名称，如 Asia/Shanghai）")
-    datetime_format: str = Field(default="%Y年%m月%d日", description="日期格式（strftime），不含星期")
-    include_lunar: bool = Field(default=True, description="是否附带农历日期")
+    datetime_format: str = Field(default="%Y年%m月%d日", description="日期格式（strftime），不含星期（仅 API/Tool）")
+    include_lunar: bool = Field(default=True, description="是否附带农历日期（仅 API/Tool；Hook 不含农历）")
     include_traditional_festivals: bool = Field(default=True, description="是否附带传统农历节日（春节/端午/中秋等）")
     include_statutory_holidays: bool = Field(default=True, description="是否附带法定节假日放假/调休补班信息")
     include_solar_terms: bool = Field(default=True, description="是否附带 24 节气信息")
     include_western_festivals: bool = Field(default=True, description="是否附带常见公历/西方节日（情人节/圣诞节等）")
     inject_on_model_request: bool = Field(
         default=False,
-        description="是否在模型请求前自动注入今天的日期上下文（默认关闭；开启可能影响前缀缓存）",
+        description="是否在模型请求前自动注入日期轻量上下文（星期/节日/节气/调休，不含公历/农历日期；默认关闭；开启可能影响前缀缓存）",
     )
     template: str = Field(
         default="【当前日期】现在是 {datetime} {weekday}{lunar}。{festivals}回复时如涉及日期、节日等请以此为准。",
-        description="今天文本模板，可使用占位符 {datetime} {weekday} {lunar} {festivals}",
+        description="今天文本模板，可使用占位符 {datetime} {weekday} {lunar} {festivals}（仅 API/Tool）",
     )
 
 
@@ -143,13 +144,13 @@ class DateContextPlugin(DateContextAPIMixin, MaiBotPlugin):
     @HookHandler(
         "maisaka.replyer.before_model_request",
         name="inject_date_context",
-        description="可选：向模型请求注入今天的日期/星期/农历/节日/节气上下文",
+        description="可选：向模型请求注入日期轻量上下文（星期/节日/节气/调休）",
         mode=HookMode.BLOCKING,
         order=HookOrder.NORMAL,
         error_policy=ErrorPolicy.SKIP,
     )
     async def inject_date(self, messages: Any = None, **kwargs: Any) -> dict[str, Any] | None:
-        """在已有 system 消息之后注入今天的日期信息（受配置开关控制）
+        """在已有 system 消息之后注入日期轻量上下文（星期/节日/节气/调休）（受配置开关控制）
 
         Args:
             messages: Host 传入的序列化消息列表
@@ -183,30 +184,65 @@ class DateContextPlugin(DateContextAPIMixin, MaiBotPlugin):
         return {"action": "continue", "modified_kwargs": {"messages": new_messages}}
 
     def _build_context_text(self) -> str:
-        """构造今天的上下文文本（兼容内部调用）
+        """构造今天/昨天/明天的轻量上下文文本。
+
+        格式：``[标签]（星期X）（节日）（节气）（节假日/调休）``，仅有的内容才带括号。
+        不含公历日期和农历日期——详细日期走 Tool。
 
         Returns:
-            str: 渲染后的文本
+            str: 形如 ``[今天]（星期四）（端午节）（夏至）（法定节假日放假）``
         """
 
         date_config = self.config.date
-
-        # 计算带时区的当前时间
         now = datetime.now(ZoneInfo(date_config.timezone))
-        naive_now = datetime(now.year, now.month, now.day)
-        lunar = cnlunar.Lunar(naive_now, godType="8char")
+        lines: list[str] = []
 
-        datetime_str = now.strftime(date_config.datetime_format)
-        weekday = _WEEKDAY_ZH[now.weekday()]
-        lunar_text = self._build_lunar_text(lunar) if date_config.include_lunar else ""
-        festivals_text = self._build_festivals_text(now, lunar)
+        for day_label, day_offset in [("昨天", -1), ("今天", 0), ("明天", 1)]:
+            dt = now + timedelta(days=day_offset)
+            naive_dt = datetime(dt.year, dt.month, dt.day)
+            lunar = cnlunar.Lunar(naive_dt, godType="8char")
 
-        return date_config.template.format(
-            datetime=datetime_str,
-            weekday=weekday,
-            lunar=lunar_text,
-            festivals=festivals_text,
-        )
+            # [标签]（有内容时才加括号）
+            segments: list[str] = [f"[{day_label}]"]
+
+            # 星期
+            segments.append(f"（{_WEEKDAY_ZH[dt.weekday()]}）")
+
+            # 节日（传统节日 + 公历节日，去重）
+            if date_config.include_traditional_festivals or date_config.include_western_festivals:
+                festivals: list[str] = []
+                if date_config.include_traditional_festivals:
+                    festivals = self._lunar_festival_names(dt, lunar)
+                if date_config.include_western_festivals:
+                    for name in self._solar_festival_names(dt):
+                        if name not in festivals:
+                            festivals.append(name)
+                if festivals:
+                    segments.append(f"（{'、'.join(festivals)}）")
+
+            # 节气
+            if date_config.include_solar_terms:
+                term = lunar.todaySolarTerms
+                if term and term != "无":
+                    segments.append(f"（{term}节气）")
+
+            # 法定节假日 / 调休补班
+            if date_config.include_statutory_holidays:
+                try:
+                    on_holiday, holiday_en = get_holiday_detail(dt.date())
+                    if on_holiday and holiday_en:
+                        holiday_cn = _LEGAL_EN2CN.get(holiday_en, holiday_en)
+                        segments.append(f"（{holiday_cn}放假）")
+                    elif dt.weekday() >= 5 and is_workday(dt.date()):
+                        segments.append("（调休补班）")
+                except NotImplementedError:
+                    self._get_logger().warning(
+                        f"chinese_calendar 无 {dt.date()} 的法定节假日数据（超出库覆盖范围），已跳过"
+                    )
+
+            lines.append("".join(segments))
+
+        return "\n".join(lines)
 
     @staticmethod
     def _build_lunar_text(lunar: "cnlunar.Lunar") -> str:

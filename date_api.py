@@ -476,6 +476,18 @@ class DateContextAPIMixin:
         if result.get("solar_term"):
             extra_parts.append(f"节气={result['solar_term']}")
 
+        # 查询今天时额外附加昨天和明天的日期提示
+        if result.get("day_offset") == 0 and result.get("date"):
+            today_date = date.fromisoformat(result["date"])
+            yesterday_date = today_date + timedelta(days=-1)
+            tomorrow_date = today_date + timedelta(days=1)
+            extra_parts.append(
+                f"昨天={yesterday_date.isoformat()}，{_WEEKDAY_ZH[yesterday_date.weekday()]}"
+            )
+            extra_parts.append(
+                f"明天={tomorrow_date.isoformat()}，{_WEEKDAY_ZH[tomorrow_date.weekday()]}"
+            )
+
         if extra_parts:
             content = content.rstrip() + "\n" + "；".join(extra_parts)
 

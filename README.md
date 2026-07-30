@@ -1,14 +1,14 @@
 # 日期上下文插件
 
 > 提供**今天**的日期/农历/节日公开 API 供其他插件调用；提供 `query_date` 工具供 LLM 查询昨天/今天/明天。  
-> **可选**在模型请求前注入今天的日期上下文（默认关闭，由用户配置开关）。
+> **可选**在模型请求前注入日期轻量上下文（星期/节日/节气/调休，默认关闭）。
 
 - **插件 ID**：`github.xiexiaojia780.date-context-plugin`
-- **版本**：1.4.0
+- **版本**：1.4.1
 - **作者**：[xiexiaojia780](https://github.com/xiexiaojia780)
 - **License**：`GPL-3.0-or-later`（与 `_manifest.json` / 根目录 `LICENSE` 一致，GNU GPLv3）
 - **LLM Tool**：`query_date`（昨天/今天/明天）
-- **公开 API**：`date` / `date_text`（**仅今天**）
+- **公开 API**：`date` / `date_text`（**查今天**）
 - **可选 Hook**：`date.inject_on_model_request`（默认 `false`）
 
 ## 仓库结构
@@ -17,7 +17,7 @@
 date_context_plugin/
 ├── _manifest.json   # 插件元数据与依赖声明
 ├── plugin.py        # 入口：节日判定 + 可选 Hook + 混入 Tool/API
-├── date_api.py      # 公开 API（仅今天）+ Tool（昨天/今天/明天）
+├── date_api.py      # 公开 API（查今天）+ Tool（昨天/今天/明天）
 ├── config.toml      # 默认配置示例
 ├── README.md
 ├── LICENSE          # GPL-3.0-or-later
@@ -26,24 +26,34 @@ date_context_plugin/
 
 ## 功能
 
-### 可选：模型请求前注入（今天）
+### 可选：模型请求前注入（星期/节日/节气/调休）
 
 配置项 `date.inject_on_model_request`：
 
 | 值 | 行为 |
 |---|---|
 | `false`（默认） | **不注入**，不影响 prompt 前缀缓存 |
-| `true` | 在已有 system 消息之后插入今天的日期 system 消息 |
+| `true` | 在已有 system 消息之后插入日期上下文，仅含本周几/节日/节气/调休信息 |
+
+详细日期（公历、农历）需走 Tool `query_date`，Hook 保持轻量以最大程度降低对前缀缓存的影响。
 
 开启后注入示例：
 
 ```
-【当前日期】现在是 2026年07月13日 星期一，农历二零二六年五月廿九。回复时如涉及日期、节日等请以此为准。
+[昨天]（星期三）
+[今天]（星期四）（端午节）（夏至）（法定节假日放假）
+[明天]（星期五）
 ```
+
+- `[昨天]` / `[今天]` / `[明天]` 三行固定出现，**星期始终有**。
+- 节日、节气、法定节假日/调休**有内容时才出现**，无空括号。
+- 不含公历日期、农历日期。
 
 插入位置在**已有连续 system 之后**（不是最顶部），以降低对前缀缓存的破坏。
 
-### 公开 API（仅今天）
+### 公开 API（查今天）
+
+调用 `date` / `date_text` 固定查询**今天**，返回当天的公历、农历、节日、法定节假日/调休等信息。
 
 | API 名 | 说明 |
 |---|---|
@@ -101,7 +111,7 @@ enabled = true
 ```toml
 [plugin]
 enabled = true
-config_version = "1.4.0"
+config_version = "1.4.1"
 
 [date]
 timezone = "Asia/Shanghai"
@@ -111,11 +121,11 @@ include_traditional_festivals = true
 include_statutory_holidays = true
 include_solar_terms = true
 include_western_festivals = true
-inject_on_model_request = false   # true=自动注入今天；false=不注入（默认）
+inject_on_model_request = false   # true=自动注入（昨天/今天/明天，星期/节日/节气/调休）；false=不注入（默认）
 template = "【当前日期】现在是 {datetime} {weekday}{lunar}。{festivals}回复时如涉及日期、节日等请以此为准。"
 ```
 
-`template` 占位符：`{datetime}` `{weekday}` `{lunar}` `{festivals}`。
+`template` 占位符：`{datetime}` `{weekday}` `{lunar}` `{festivals}`（仅控制 API/Tool 返回的文本格式，不影响 Hook 注入）。
 
 也可在 WebUI「日期」分组里切换 **是否在模型请求前自动注入**。
 
@@ -123,8 +133,8 @@ template = "【当前日期】现在是 {datetime} {weekday}{lunar}。{festivals
 
 本插件不提供用户侧 `/command`。
 
-- **可选 Hook 注入**：`inject_on_model_request` 控制是否注入今天
-- **公开 API**：`date` / `date_text` —— **仅今天**
+- **可选 Hook 注入**：`inject_on_model_request` 控制是否注入（星期/节日/节气/调休，轻量格式）
+- **公开 API**：`date` / `date_text` —— 查今天
 - **Tool**：`query_date` —— LLM 查昨天 / 今天 / 明天
 
 ## 权限 / 能力说明
@@ -136,13 +146,13 @@ template = "【当前日期】现在是 {datetime} {weekday}{lunar}。{festivals
 | 消息发送 | 不主动发消息 |
 | Hook | 可选；`inject_on_model_request=true` 时生效 |
 | Tool | `query_date` |
-| 公开 API | `date` / `date_text`（仅今天） |
+| 公开 API | `date` / `date_text`（查今天） |
 
 ## 工作原理
 
 1. **API**：固定算今天，返回结构化数据或文本。
-2. **Tool**：按 `day`/`at` 查昨天/今天/明天。
-3. **Hook（可选）**：`inject_on_model_request=true` 时，在 system 段落后插入今天的日期消息。
+2. **Tool**：按 `day`/`at` 查昨天/今天/明天，查询今天时额外提示昨日/明日。
+3. **Hook（可选）**：`inject_on_model_request=true` 时，在 system 段落后插入日期轻量上下文（星期/节日/节气/调休），不含公历/农历日期，最大程度降低对前缀缓存的影响。
 
 ### 关于 Prompt 前缀缓存
 
@@ -154,7 +164,7 @@ template = "【当前日期】现在是 {datetime} {weekday}{lunar}。{festivals
 
 | 现象 | 处理 |
 |---|---|
-| 想注入但没有 | 设 `date.inject_on_model_request = true`，且 `plugin.enabled = true` |
+| 想注入但没有 | 设 `date.inject_on_model_request = true`，且 `plugin.enabled = true`（注入格式为轻量，只有星期/节日/节气/调休） |
 | 不想注入但仍有 | 确认配置为 `false` 并热重载/重启 |
 | 模型调不到 `query_date` | 确认插件启用、工具列表含 `query_date` |
 | 其他插件调 API 失败 | 用全名 `github.xiexiaojia780.date-context-plugin.date` |
@@ -166,9 +176,9 @@ template = "【当前日期】现在是 {datetime} {weekday}{lunar}。{festivals
 
 不会。默认 `inject_on_model_request = false`。需要时再打开。
 
-**Q：API 能不能查昨天？**
+**Q：API 能不能单独查某一天？**
 
-公开 API **仅今天**。昨天/明天用 Tool `query_date`。
+公开 API 固定查**今天**。需要任意日期请用 Tool `query_date`。
 
 **Q：除夕怎么判定？**
 
