@@ -7,6 +7,7 @@
 - **版本**：1.4.1
 - **作者**：[xiexiaojia780](https://github.com/xiexiaojia780)
 - **License**：`GPL-3.0-or-later`（与 `_manifest.json` / 根目录 `LICENSE` 一致，GNU GPLv3）
+- **反馈**：`483403354@qq.com`（发现 Bug 或有建议欢迎来邮）
 - **LLM Tool**：`query_date`（昨天/今天/明天）
 - **公开 API**：`date` / `date_text`（**查今天**）
 - **可选 Hook**：`date.inject_on_model_request`（默认 `false`）
