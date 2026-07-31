@@ -5,8 +5,7 @@
   "description": "提供 date/date_text 公开 API（仅今天）、query_date 工具（昨天/今天/明天），以及可选的模型请求日期注入（date.inject_on_model_request）",
   "author": {
     "name": "xiexiaojia780",
-    "url": "https://github.com/xiexiaojia780",
-    "email": "483403354@qq.com"
+    "url": "https://github.com/xiexiaojia780"
   },
   "license": "GPL-3.0-or-later",
   "urls": {
