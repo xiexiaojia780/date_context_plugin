@@ -84,8 +84,16 @@ class PluginSectionConfig(PluginConfigBase):
     __ui_icon__ = "package"
     __ui_order__ = 0
 
-    enabled: bool = Field(default=True, description="是否启用插件")
-    config_version: str = Field(default="1.4.1", description="配置版本")
+    enabled: bool = Field(
+        default=True,
+        description="是否启用插件",
+        json_schema_extra={"label": "启用插件"},
+    )
+    config_version: str = Field(
+        default="1.4.2",
+        description="配置版本",
+        json_schema_extra={"label": "配置版本"},
+    )
 
 
 class DateInjectionConfig(PluginConfigBase):
@@ -95,20 +103,45 @@ class DateInjectionConfig(PluginConfigBase):
     __ui_icon__ = "calendar"
     __ui_order__ = 1
 
-    timezone: str = Field(default="Asia/Shanghai", description="计算当前日期所用的时区（IANA 名称，如 Asia/Shanghai）")
-    datetime_format: str = Field(default="%Y年%m月%d日", description="日期格式（strftime），不含星期（仅 API/Tool）")
-    include_lunar: bool = Field(default=True, description="是否附带农历日期（仅 API/Tool；Hook 不含农历）")
-    include_traditional_festivals: bool = Field(default=True, description="是否附带传统农历节日（春节/端午/中秋等）")
-    include_statutory_holidays: bool = Field(default=True, description="是否附带法定节假日放假/调休补班信息")
-    include_solar_terms: bool = Field(default=True, description="是否附带 24 节气信息")
-    include_western_festivals: bool = Field(default=True, description="是否附带常见公历/西方节日（情人节/圣诞节等）")
+    timezone: str = Field(
+        default="Asia/Shanghai",
+        description="计算当前日期所用的时区（IANA 名称，如 Asia/Shanghai）",
+        json_schema_extra={"label": "时区"},
+    )
+    datetime_format: str = Field(
+        default="%Y年%m月%d日",
+        description="日期格式（strftime），不含星期（仅 API/Tool）",
+        json_schema_extra={"label": "公历日期格式"},
+    )
+    include_lunar: bool = Field(
+        default=True,
+        description="是否附带农历日期（仅 API/Tool；Hook 不含农历）",
+        json_schema_extra={"label": "附带农历日期"},
+    )
+    include_traditional_festivals: bool = Field(
+        default=True,
+        description="是否附带传统农历节日（春节/端午/中秋等）",
+        json_schema_extra={"label": "附带农历节日"},
+    )
+    include_statutory_holidays: bool = Field(
+        default=True,
+        description="是否附带法定节假日放假/调休补班信息",
+        json_schema_extra={"label": "附带法定节假日"},
+    )
+    include_solar_terms: bool = Field(
+        default=True,
+        description="是否附带 24 节气信息",
+        json_schema_extra={"label": "附带节气"},
+    )
+    include_western_festivals: bool = Field(
+        default=True,
+        description="是否附带常见公历/西方节日（情人节/圣诞节等）",
+        json_schema_extra={"label": "附带公历/西方节日"},
+    )
     inject_on_model_request: bool = Field(
         default=False,
         description="是否在模型请求前自动注入日期轻量上下文（星期/节日/节气/调休，不含公历/农历日期；默认关闭；开启可能影响前缀缓存）",
-    )
-    template: str = Field(
-        default="【当前日期】现在是 {datetime} {weekday}{lunar}。{festivals}回复时如涉及日期、节日等请以此为准。",
-        description="今天文本模板，可使用占位符 {datetime} {weekday} {lunar} {festivals}（仅 API/Tool）",
+        json_schema_extra={"label": "模型请求前注入日期"},
     )
 
 

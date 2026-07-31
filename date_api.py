@@ -245,18 +245,11 @@ def build_date_context_from_plugin(
 
     festivals_text = "".join(f"{phrase}。" for phrase in phrases)
 
-    # Hook 注入仍用配置 template（仅今天）；Tool 用带相对日标签的可读文本
-    if day_label == "今天" and day_offset == 0 and not (at and str(at).strip()):
-        text = date_config.template.format(
-            datetime=datetime_str,
-            weekday=weekday,
-            lunar=lunar_text,
-            festivals=festivals_text,
-        )
-    else:
-        text = f"【{day_label}】{day_label}是 {datetime_str} {weekday}{lunar_text}。{festivals_text}".rstrip()
-        if not text.endswith("。"):
-            text += "。"
+    # 今天/昨天/明天/指定日期统一使用带相对日标签的固定文本格式（不再使用可配置 template）。
+    # 注意：Hook 注入不经过这里，走 plugin._build_context_text 的固定轻型格式。
+    text = f"【{day_label}】{day_label}是 {datetime_str} {weekday}{lunar_text}。{festivals_text}".rstrip()
+    if not text.endswith("。"):
+        text += "。"
 
     month_cn = lunar.lunarMonthCn
     if month_cn and month_cn[-1] in "大小":

@@ -1,6 +1,6 @@
 {
   "manifest_version": 2,
-  "version": "1.4.1",
+  "version": "1.4.2",
   "name": "日期上下文插件",
   "description": "提供 date/date_text 公开 API（仅今天）、query_date 工具（昨天/今天/明天），以及可选的模型请求日期注入（date.inject_on_model_request）",
   "author": {

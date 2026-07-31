@@ -30,6 +30,9 @@ secrets/
 *.pem
 *.key
 
+# 运行时配置（由 Runner 根据 config_model 自动生成，不提交）
+/config.toml
+
 # 系统文件
 .DS_Store
 Thumbs.db

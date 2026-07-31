@@ -4,7 +4,7 @@
 > **可选**在模型请求前注入日期轻量上下文（星期/节日/节气/调休，默认关闭）。
 
 - **插件 ID**：`github.xiexiaojia780.date-context-plugin`
-- **版本**：1.4.1
+- **版本**：1.4.2
 - **作者**：[xiexiaojia780](https://github.com/xiexiaojia780)
 - **License**：`GPL-3.0-or-later`（与 `_manifest.json` / 根目录 `LICENSE` 一致，GNU GPLv3）
 - **反馈**：`483403354@qq.com`（发现 Bug 或有建议欢迎来邮）
@@ -112,7 +112,7 @@ enabled = true
 ```toml
 [plugin]
 enabled = true
-config_version = "1.4.1"
+config_version = "1.4.2"
 
 [date]
 timezone = "Asia/Shanghai"
@@ -123,10 +123,9 @@ include_statutory_holidays = true
 include_solar_terms = true
 include_western_festivals = true
 inject_on_model_request = false   # true=自动注入（昨天/今天/明天，星期/节日/节气/调休）；false=不注入（默认）
-template = "【当前日期】现在是 {datetime} {weekday}{lunar}。{festivals}回复时如涉及日期、节日等请以此为准。"
 ```
 
-`template` 占位符：`{datetime}` `{weekday}` `{lunar}` `{festivals}`（仅控制 API/Tool 返回的文本格式，不影响 Hook 注入）。
+API/Tool 返回的日期文本使用固定格式（`【今天】今天是 …`），无自定义模板；Hook 注入使用独立轻型格式。
 
 也可在 WebUI「日期」分组里切换 **是否在模型请求前自动注入**。
 
