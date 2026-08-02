@@ -19,7 +19,6 @@ date_context_plugin/
 ├── _manifest.json   # 插件元数据与依赖声明
 ├── plugin.py        # 入口：节日判定 + 可选 Hook + 混入 Tool/API
 ├── date_api.py      # 公开 API（查今天）+ Tool（昨天/今天/明天）
-├── config.toml      # 默认配置示例
 ├── README.md
 ├── LICENSE          # GPL-3.0-or-later
 └── _locales/        # i18n 占位
