@@ -1,8 +1,8 @@
 {
   "manifest_version": 2,
-  "version": "1.4.2",
+  "version": "1.4.5",
   "name": "日期上下文插件",
-  "description": "提供 date/date_text 公开 API（仅今天）、query_date 工具（昨天/今天/明天），以及可选的模型请求日期注入（date.inject_on_model_request）",
+  "description": "提供 date/date_text/holiday 公开 API（仅今天）、query_date/query_holiday 工具（日期与特定节日查询），以及可选的模型请求日期注入（date.inject_on_model_request）",
   "author": {
     "name": "xiexiaojia780",
     "url": "https://github.com/xiexiaojia780"

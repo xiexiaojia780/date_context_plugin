@@ -2,7 +2,9 @@
 
 提供：
 - 公开 API ``date`` / ``date_text``：仅返回**今天**的日期/农历/节日信息，供其他插件调用
+- 公开 API ``holiday``：仅今天 的特定节日查询（可选按名称过滤）
 - LLM Tool ``query_date``：供模型查询昨天 / 今天 / 明天（或指定 ISO 日期）
+- LLM Tool ``query_holiday``：按名称查询特定节日（支持年份或具体日期）
 - 可选 Hook 注入：配置 ``date.inject_on_model_request`` 为 true 时，在模型请求前
   向已有 system 消息之后插入日期轻量上下文（星期/节日/节气/调休，不含公历/农历日期）
   （默认关闭，避免影响前缀缓存）
@@ -24,57 +26,36 @@ from maibot_sdk import Field, HookHandler, MaiBotPlugin, PluginConfigBase
 from maibot_sdk.types import ErrorPolicy, HookMode, HookOrder
 
 try:
-    from .date_api import DateContextAPIMixin
+    from .date_api import (
+        DateContextAPIMixin,
+        # 集中化的节日数据与纯函数（推荐从 date_api 导入）
+        _LUNAR_FESTIVALS,
+        _SOLAR_FESTIVALS,
+        _LEGAL_EN2CN,
+        _WEEKDAY_ZH,
+        _get_lunar,
+        _lunar_festival_names as _lunar_festival_names_fn,
+        _solar_festival_names as _solar_festival_names_fn,
+    )
 except ImportError:
     # PluginLoader 以文件方式加载时相对导入可能失败，回退到同目录绝对导入
-    from date_api import DateContextAPIMixin  # type: ignore
+    from date_api import (  # type: ignore
+        DateContextAPIMixin,
+        _LUNAR_FESTIVALS,
+        _SOLAR_FESTIVALS,
+        _LEGAL_EN2CN,
+        _WEEKDAY_ZH,
+        _get_lunar,
+        _lunar_festival_names as _lunar_festival_names_fn,
+        _solar_festival_names as _solar_festival_names_fn,
+    )
 
-# 星期中文映射：datetime 的 %A 依赖系统 locale，结果不稳定，这里按 weekday() 自行映射
-_WEEKDAY_ZH = ("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")
+# 星期中文映射与 _get_lunar 缓存统一从 date_api 导入（单一真相来源）
 
-# 农历传统节日：(农历月, 农历日) -> 名称（仅非闰月生效）除夕单独按"明日为正月初一"判定
-_LUNAR_FESTIVALS: dict[tuple[int, int], str] = {
-    (1, 1): "春节",
-    (1, 15): "元宵节",
-    (2, 2): "龙抬头",
-    (5, 5): "端午节",
-    (7, 7): "七夕节",
-    (7, 15): "中元节",
-    (8, 15): "中秋节",
-    (9, 9): "重阳节",
-    (12, 8): "腊八节",
-}
-
-# 公历常见 / 西方节日（固定日期）：(公历月, 公历日) -> 名称
-_SOLAR_FESTIVALS: dict[tuple[int, int], str] = {
-    (1, 1): "元旦",
-    (2, 14): "情人节",
-    (3, 8): "妇女节",
-    (3, 12): "植树节",
-    (4, 1): "愚人节",
-    (5, 1): "劳动节",
-    (5, 4): "青年节",
-    (6, 1): "儿童节",
-    (7, 1): "建党节",
-    (8, 1): "建军节",
-    (9, 10): "教师节",
-    (10, 1): "国庆节",
-    (10, 31): "万圣夜",
-    (11, 1): "万圣节",
-    (12, 24): "平安夜",
-    (12, 25): "圣诞节",
-}
-
-# chinese_calendar 返回的法定节假日英文名 -> 中文名
-_LEGAL_EN2CN: dict[str, str] = {
-    "New Year's Day": "元旦",
-    "Spring Festival": "春节",
-    "Tomb-sweeping Day": "清明节",
-    "Labour Day": "劳动节",
-    "Dragon Boat Festival": "端午节",
-    "Mid-autumn Festival": "中秋节",
-    "National Day": "国庆节",
-}
+# 注意：
+# 以下节日数据已集中到 date_api.py 以便 Tool/API/Hook 共享。
+# 这里通过导入的符号提供模块级名称，保持 _build_* 内部引用不变。
+# 具体定义见 date_api.py 中的 _LUNAR_FESTIVALS / _SOLAR_FESTIVALS / _LEGAL_EN2CN。
 
 
 class PluginSectionConfig(PluginConfigBase):
@@ -90,7 +71,7 @@ class PluginSectionConfig(PluginConfigBase):
         json_schema_extra={"label": "启用插件"},
     )
     config_version: str = Field(
-        default="1.4.2",
+        default="1.4.0",
         description="配置版本",
         json_schema_extra={"label": "配置版本"},
     )
@@ -161,7 +142,9 @@ class DateContextPlugin(DateContextAPIMixin, MaiBotPlugin):
         """处理插件加载"""
         inject = bool(getattr(self.config.date, "inject_on_model_request", False))
         self.ctx.logger.info(
-            "日期上下文插件已加载（inject_on_model_request=%s；API: date/date_text 仅今天；Tool: query_date）"
+            "日期上下文插件已加载（inject_on_model_request=%s；"
+            "API: date/date_text/holiday（仅今天）；"
+            "Tool: query_date, query_holiday）"
             % inject
         )
 
@@ -228,12 +211,26 @@ class DateContextPlugin(DateContextAPIMixin, MaiBotPlugin):
 
         date_config = self.config.date
         now = datetime.now(ZoneInfo(date_config.timezone))
+
+        # 按“时区 + 本地日期 + 信息源开关”缓存当天结果：一天内多次模型请求零成本，
+        # 跨天自然失效（只保留一条，随日期滚动）。
+        cache_key = (
+            date_config.timezone,
+            now.date().isoformat(),
+            date_config.include_traditional_festivals,
+            date_config.include_statutory_holidays,
+            date_config.include_solar_terms,
+            date_config.include_western_festivals,
+        )
+        cached = getattr(self, "_inject_cache", None)
+        if cached is not None and cached[0] == cache_key:
+            return cached[1]
+
         lines: list[str] = []
 
         for day_label, day_offset in [("昨天", -1), ("今天", 0), ("明天", 1)]:
             dt = now + timedelta(days=day_offset)
-            naive_dt = datetime(dt.year, dt.month, dt.day)
-            lunar = cnlunar.Lunar(naive_dt, godType="8char")
+            lunar = _get_lunar(dt.year, dt.month, dt.day)
 
             # [标签]（有内容时才加括号）
             segments: list[str] = [f"[{day_label}]"]
@@ -275,7 +272,9 @@ class DateContextPlugin(DateContextAPIMixin, MaiBotPlugin):
 
             lines.append("".join(segments))
 
-        return "\n".join(lines)
+        text = "\n".join(lines)
+        self._inject_cache = (cache_key, text)
+        return text
 
     @staticmethod
     def _build_lunar_text(lunar: "cnlunar.Lunar") -> str:
@@ -371,55 +370,42 @@ class DateContextPlugin(DateContextAPIMixin, MaiBotPlugin):
 
     @staticmethod
     def _lunar_festival_names(now: datetime, lunar: "cnlunar.Lunar") -> list[str]:
-        """返回当天的传统农历节日名称列表
-
-        Args:
-            now: 带时区的当前时间
-            lunar: cnlunar 农历对象
-
-        Returns:
-            list[str]: 传统节日名称列表（可能为空）
-        """
-
-        names: list[str] = []
-        if not lunar.isLunarLeapMonth:
-            festival = _LUNAR_FESTIVALS.get((lunar.lunarMonth, lunar.lunarDay))
-            if festival:
-                names.append(festival)
-
-        # 除夕：明日为正月初一（腊月末日可能是廿九或三十，按"明日初一"判定最稳）
-        tomorrow = datetime(now.year, now.month, now.day) + timedelta(days=1)
-        next_lunar = cnlunar.Lunar(tomorrow, godType="8char")
-        if next_lunar.lunarMonth == 1 and next_lunar.lunarDay == 1:
-            names.append("除夕")
-        return names
+        """返回当天的传统农历节日名称列表（委托到 date_api 集中实现）。"""
+        # 委托到 date_api 中的纯函数实现，保证单一真相来源
+        try:
+            return _lunar_festival_names_fn(now, lunar)
+        except NameError:
+            # 极端回退（极少发生）：若导入符号丢失则使用局部最小实现
+            names: list[str] = []
+            if not getattr(lunar, "isLunarLeapMonth", False):
+                festival = _LUNAR_FESTIVALS.get((lunar.lunarMonth, lunar.lunarDay))
+                if festival:
+                    names.append(festival)
+            tomorrow = datetime(now.year, now.month, now.day) + timedelta(days=1)
+            next_lunar = cnlunar.Lunar(tomorrow, godType="8char")
+            if next_lunar.lunarMonth == 1 and next_lunar.lunarDay == 1:
+                names.append("除夕")
+            return names
 
     @staticmethod
     def _solar_festival_names(now: datetime) -> list[str]:
-        """返回当天的常见公历/西方节日名称列表（含按周计算的母亲节/父亲节/感恩节）
-
-        Args:
-            now: 带时区的当前时间
-
-        Returns:
-            list[str]: 公历节日名称列表（可能为空）
-        """
-
-        names: list[str] = []
-        fixed = _SOLAR_FESTIVALS.get((now.month, now.day))
-        if fixed:
-            names.append(fixed)
-
-        # 按"第 N 个星期 X"计算的节日
-        weekday = now.weekday()
-        week_index = (now.day - 1) // 7 + 1  # 当天是本月第几个该星期
-        if now.month == 5 and weekday == 6 and week_index == 2:
-            names.append("母亲节")
-        elif now.month == 6 and weekday == 6 and week_index == 3:
-            names.append("父亲节")
-        elif now.month == 11 and weekday == 3 and week_index == 4:
-            names.append("感恩节")
-        return names
+        """返回当天的常见公历/西方节日名称列表（含母亲节等，按周计算；委托到 date_api）。"""
+        try:
+            return _solar_festival_names_fn(now)
+        except NameError:
+            names: list[str] = []
+            fixed = _SOLAR_FESTIVALS.get((now.month, now.day))
+            if fixed:
+                names.append(fixed)
+            weekday = now.weekday()
+            week_index = (now.day - 1) // 7 + 1
+            if now.month == 5 and weekday == 6 and week_index == 2:
+                names.append("母亲节")
+            elif now.month == 6 and weekday == 6 and week_index == 3:
+                names.append("父亲节")
+            elif now.month == 11 and weekday == 3 and week_index == 4:
+                names.append("感恩节")
+            return names
 
 
 def create_plugin() -> DateContextPlugin:

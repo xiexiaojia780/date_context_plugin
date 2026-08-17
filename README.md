@@ -1,15 +1,15 @@
 # 日期上下文插件
 
-> 提供**今天**的日期/农历/节日公开 API 供其他插件调用；提供 `query_date` 工具供 LLM 查询昨天/今天/明天。  
+> 提供**今天**的日期/农历/节日公开 API 供其他插件调用；提供 `query_date`/`query_holiday` 工具供 LLM 查询日期与特定节日。  
 > **可选**在模型请求前注入日期轻量上下文（星期/节日/节气/调休，默认关闭）。
 
 - **插件 ID**：`github.xiexiaojia780.date-context-plugin`
-- **版本**：1.4.2
+- **版本**：1.4.5
 - **作者**：[xiexiaojia780](https://github.com/xiexiaojia780)
 - **License**：`GPL-3.0-or-later`（与 `_manifest.json` / 根目录 `LICENSE` 一致，GNU GPLv3）
 - **反馈**：`483403354@qq.com`（发现 Bug 或有建议欢迎来邮）
-- **LLM Tool**：`query_date`（昨天/今天/明天）
-- **公开 API**：`date` / `date_text`（**查今天**）
+- **LLM Tool**：`query_date`（昨天/今天/明天）、`query_holiday`（按名称查特定节日）
+- **公开 API**：`date` / `date_text`（**查今天**）、`holiday`（**今天 + 名称过滤**）
 - **可选 Hook**：`date.inject_on_model_request`（默认 `false`）
 
 ## 仓库结构
@@ -18,7 +18,7 @@
 date_context_plugin/
 ├── _manifest.json   # 插件元数据与依赖声明
 ├── plugin.py        # 入口：节日判定 + 可选 Hook + 混入 Tool/API
-├── date_api.py      # 公开 API（查今天）+ Tool（昨天/今天/明天）
+├── date_api.py      # 集中数据 + 公开 API（查今天 / 今日节日） + Tool（日期 + 特定节日）
 ├── README.md
 ├── LICENSE          # GPL-3.0-or-later
 └── _locales/        # i18n 占位
@@ -54,11 +54,13 @@ date_context_plugin/
 ### 公开 API（查今天）
 
 调用 `date` / `date_text` 固定查询**今天**，返回当天的公历、农历、节日、法定节假日/调休等信息。
+调用 `holiday` 可查询**今天**是否为特定节日（支持名称过滤）。
 
 | API 名 | 说明 |
 |---|---|
 | `date` | 结构化结果（文本 + 农历/节日/调休等字段） |
 | `date_text` | 仅返回渲染文本 `{"text": "..."}` |
+| `holiday` | 今日特定节日匹配（可选 `name` 参数过滤）；无名称时返回今天所有节日摘要 |
 
 ```python
 result = await self.ctx.api.call(
@@ -71,9 +73,17 @@ if isinstance(result, dict) and "error" not in result:
 r = await self.ctx.api.call(
     "github.xiexiaojia780.date-context-plugin.date_text"
 )
+
+h = await self.ctx.api.call(
+    "github.xiexiaojia780.date-context-plugin.holiday",
+    name="端午节"
+)
+occurs = h.get("occurs")
+dates = h.get("dates", [])
 ```
 
-可选参数：`timezone`、`include_lunar`、`include_traditional_festivals`、`include_statutory_holidays`、`include_solar_terms`、`include_western_festivals`。
+`holiday` 可选参数：`name`（节日名称，支持别名）、`timezone`。
+`date` / `date_text` 可选参数：`timezone`、`include_*` 系列开关。
 
 ### LLM Tool：`query_date`
 
@@ -81,6 +91,33 @@ r = await self.ctx.api.call(
 |---|---|---|
 | `day` | 否 | `今天` / `昨天` / `明天`，或 `today` / `yesterday` / `tomorrow`；默认 `今天` |
 | `at` | 否 | 绝对日期 ISO，如 `2026-10-01`；若填写则优先于 `day` |
+
+### LLM Tool：`query_holiday`
+
+按名称查询特定节日的日期与放假/调休信息。支持指定年份，或用 `day`/`at` 精确检查某天。
+
+`year` 查询**只返回落在该公历年份内**的日期：跨年的农历节日按公历年份归位
+（例如 2026 年的除夕为 2026-02-16、腊八为 2026-01-26），不会混入相邻年份的结果。
+
+| 参数 | 必填 | 说明 |
+|---|---|---|
+| `name` | 是 | 节日名称，支持别名（如 `端午节` / `端午` / `Dragon Boat Festival`、`清明节` / `清明`） |
+| `year` | 否 | 目标公历年份（默认当前年）；只返回落在该年份内的日期 |
+| `day` | 否 | 相对日期：`今天`/`昨天`/`明天` 等；用于精确检查“某天是不是该节日” |
+| `at` | 否 | 绝对日期 ISO（如 `2026-06-19`）；优先于 `day`/`year` |
+
+支持的节日示例（部分）：
+- 春节（含除夕）、元宵节、端午节、七夕节、中秋节、重阳节、腊八节、龙抬头、中元节
+- 元旦、清明节、劳动节、端午节、中秋节、国庆节
+- 情人节、妇女节、植树节、愚人节、青年节、儿童节、建党节、建军节、教师节、万圣节、平安夜、圣诞节
+- 母亲节、父亲节、感恩节
+
+示例调用（由模型决定何时使用）：
+- “端午节是哪天？” → `query_holiday(name="端午节", year=2026)`
+- “今天是中秋节吗？” → `query_holiday(name="中秋节", day="今天")`
+- “2026 年清明节放假吗？” → 模型会拿到 `query_holiday` 返回的日期与法定信息。
+
+用 `day`/`at` 精确检查某天时，返回文本会带上具体日期标签（如「10月1日是法定节假日（国庆节），放假」），不会误写成“今天”。
 
 ### 信息源
 
@@ -111,7 +148,7 @@ enabled = true
 ```toml
 [plugin]
 enabled = true
-config_version = "1.4.2"
+config_version = "1.4.0"
 
 [date]
 timezone = "Asia/Shanghai"
@@ -124,7 +161,7 @@ include_western_festivals = true
 inject_on_model_request = false   # true=自动注入（昨天/今天/明天，星期/节日/节气/调休）；false=不注入（默认）
 ```
 
-API/Tool 返回的日期文本使用固定格式（`【今天】今天是 …`），无自定义模板；Hook 注入使用独立轻型格式。
+`date`/`date_text`/`query_date` 的日期文本使用固定格式（`【今天】今天是 …`），无自定义模板；`query_holiday` 检查具体日期时带日期标签（如「10月1日是…」）；Hook 注入使用独立轻型格式。
 
 也可在 WebUI「日期」分组里切换 **是否在模型请求前自动注入**。
 
@@ -133,8 +170,8 @@ API/Tool 返回的日期文本使用固定格式（`【今天】今天是 …`�
 本插件不提供用户侧 `/command`。
 
 - **可选 Hook 注入**：`inject_on_model_request` 控制是否注入（星期/节日/节气/调休，轻量格式）
-- **公开 API**：`date` / `date_text` —— 查今天
-- **Tool**：`query_date` —— LLM 查昨天 / 今天 / 明天
+- **公开 API**：`date` / `date_text` —— 查今天；`holiday` —— 今日特定节日（可传 `name`）
+- **Tool**：`query_date` —— LLM 查昨天 / 今天 / 明天；`query_holiday` —— 按名称查特定节日（支持年份/日期）
 
 ## 权限 / 能力说明
 
@@ -144,13 +181,13 @@ API/Tool 返回的日期文本使用固定格式（`【今天】今天是 …`�
 | 文件 / 数据库 | 无持久化 |
 | 消息发送 | 不主动发消息 |
 | Hook | 可选；`inject_on_model_request=true` 时生效 |
-| Tool | `query_date` |
-| 公开 API | `date` / `date_text`（查今天） |
+| Tool | `query_date`（日期）、`query_holiday`（按名称查特定节日） |
+| 公开 API | `date` / `date_text`（查今天）、`holiday`（今天 + 可选名称过滤） |
 
 ## 工作原理
 
 1. **API**：固定算今天，返回结构化数据或文本。
-2. **Tool**：按 `day`/`at` 查昨天/今天/明天，查询今天时额外提示昨日/明日。
+2. **Tool**：`query_date` 按 `day`/`at` 查昨天/今天/明天（查询今天时额外提示昨日/明日）；`query_holiday` 按 `name`+`year` 查节日日期（仅返回该年份），或用 `day`/`at` 精确检查某天。
 3. **Hook（可选）**：`inject_on_model_request=true` 时，在 system 段落后插入日期轻量上下文（星期/节日/节气/调休），不含公历/农历日期，最大程度降低对前缀缓存的影响。
 
 ### 关于 Prompt 前缀缓存
@@ -166,8 +203,10 @@ API/Tool 返回的日期文本使用固定格式（`【今天】今天是 …`�
 | 想注入但没有 | 设 `date.inject_on_model_request = true`，且 `plugin.enabled = true`（注入格式为轻量，只有星期/节日/节气/调休） |
 | 不想注入但仍有 | 确认配置为 `false` 并热重载/重启 |
 | 模型调不到 `query_date` | 确认插件启用、工具列表含 `query_date` |
-| 其他插件调 API 失败 | 用全名 `github.xiexiaojia780.date-context-plugin.date` |
+| 模型调不到 `query_holiday` | 确认插件启用、工具列表含 `query_holiday`，并提供有效的 `name` |
+| 其他插件调 API 失败 | 用全名，如 `github.xiexiaojia780.date-context-plugin.date` 或 `...holiday` |
 | 调休信息缺失 | 升级 `chinese-calendar` |
+| 查询不到某年节日 | 法定节假日受 `chinese_calendar` 数据年份范围限制（超出会跳过并记录日志）；农历节日受 `cnlunar` 支持范围限制 |
 
 ## 常见问题
 
@@ -182,6 +221,20 @@ API/Tool 返回的日期文本使用固定格式（`【今天】今天是 …`�
 **Q：除夕怎么判定？**
 
 按「明日是否正月初一」。
+
+**Q：如何查询端午节 / 清明节的日期？**
+
+使用 Tool `query_holiday`，传入 `name`（支持别名）和可选 `year`；`year` 只返回该公历年份内的日期。例如：
+- `query_holiday(name="端午节", year=2026)`
+- `query_holiday(name="清明", day="今天")`
+
+**Q：API 能查特定节日吗？**
+
+`holiday` API 仅查询**今天**（可传 `name` 过滤）。需要查其他日期/年份请使用 Tool `query_holiday`。
+
+**Q：为什么某年查不到法定节假日？**
+
+`chinese_calendar` 库有数据年份覆盖上限，超出范围时会跳过并记录警告日志。
 
 ## 许可证
 
