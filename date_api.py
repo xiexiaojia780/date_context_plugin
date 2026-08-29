@@ -1,9 +1,19 @@
 """日期上下文 Tool / API 模块
 
-- ``@API("date" / "date_text")``：供其他插件调用，**仅返回今天**
-- ``@API("holiday")``：供其他插件调用，**仅今天** 的特定节日查询（可选按名称过滤）
-- ``@Tool("query_date")``：供 LLM 查询昨天/今天/明天（或指定 ISO 日期）
-- ``@Tool("query_holiday")``：供 LLM 按名称查询特定节日（支持年份/具体日期）
+命名规范（公开 API 与 LLM Tool 成对）：
+
+==========================  ==========================================
+公开 API（资源名）          LLM Tool（query_ + 同一资源词根）
+==========================  ==========================================
+``date``                    ``query_date``
+``date_text``               （``query_date`` 的轻量变体，无独立 Tool）
+``holiday``                 ``query_holiday``
+==========================  ==========================================
+
+- ``@API("date" / "date_text" / "holiday", public=True)``：供其他插件调用，**仅返回今天**
+- ``@Tool("query_date" / "query_holiday")``：供 LLM 调用，支持相对日（昨天/今天/明天）、
+  绝对日期（``at``）与年份（``year``）
+- Tool 不与 API 直接同名：两者在 Host 组件表中曾因同名撞名，故 Tool 统一加 ``query_`` 前缀
 """
 
 from __future__ import annotations
@@ -890,9 +900,18 @@ def build_holiday_context_from_plugin(
 class DateContextAPIMixin:
     """Tool + 公开 API 混入类：挂到插件类上即可注册。
 
-    - 其他插件：``@API("date" / "date_text" / "holiday", public=True)`` —— **仅今天**
-    - LLM：``@Tool("query_date")`` —— 昨天/今天/明天
-    - LLM：``@Tool("query_holiday")`` —— 按名称查询特定节日（支持年份/日期）
+    命名规范（公开 API 与 LLM Tool 成对，见模块 docstring）：
+
+    ================  ==========================
+    公开 API          LLM Tool
+    ================  ==========================
+    ``date``          ``query_date``
+    ``date_text``     （``query_date`` 轻量变体）
+    ``holiday``       ``query_holiday``
+    ================  ==========================
+
+    - 其他插件：``@API(..., public=True)`` —— **仅今天**
+    - LLM：``@Tool(...)`` —— 相对日（昨天/今天/明天）、绝对日期、年份
 
     依赖宿主插件提供：
     - ``self.config.plugin.enabled``
@@ -906,7 +925,7 @@ class DateContextAPIMixin:
 
     @API(
         "date",
-        description="获取今天的结构化日期/农历/节日上下文（仅今天）",
+        description="日期：获取今天的结构化日期/农历/节日上下文（仅今天）",
         version="1",
         public=True,
     )
@@ -962,7 +981,7 @@ class DateContextAPIMixin:
 
     @API(
         "date_text",
-        description="获取今天的日期渲染文本（仅今天）",
+        description="日期文本：获取今天的日期渲染文本（仅今天）",
         version="1",
         public=True,
     )
@@ -991,8 +1010,8 @@ class DateContextAPIMixin:
 
     @Tool(
         "query_date",
-        description="查询今天/昨天/明天（或指定日期）的公历、星期、农历、节日、节气与是否放假调休",
-        brief_description="查询今天、昨天或明天的日期与节日信息",
+        description="查询日期：今天/昨天/明天（或指定日期）的公历、星期、农历、节日、节气与是否放假调休",
+        brief_description="查询日期（昨天/今天/明天或指定日期）",
         parameters=[
             ToolParameterInfo(
                 name="day",
@@ -1088,7 +1107,7 @@ class DateContextAPIMixin:
 
     @API(
         "holiday",
-        description="查询今天是否为特定节日（可选按名称过滤）；供其他插件调用，仅今天",
+        description="节日：查询今天是否为特定节日，可选按名称过滤（仅今天）",
         version="1",
         public=True,
     )
@@ -1159,8 +1178,8 @@ class DateContextAPIMixin:
 
     @Tool(
         "query_holiday",
-        description="按名称查询特定节日（春节/端午/中秋/母亲节/清明节/国庆节等）的日期、是否放假等。支持指定年份或具体日期。",
-        brief_description="查询特定节日的日期与详情",
+        description="查询节日：按名称查询特定节日（春节/端午/中秋/母亲节/清明节/国庆节等）的日期、是否放假等，支持指定年份或具体日期",
+        brief_description="查询节日（按名称，支持年份或指定日期）",
         parameters=[
             ToolParameterInfo(
                 name="name",

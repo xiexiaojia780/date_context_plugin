@@ -2,7 +2,7 @@
   "manifest_version": 2,
   "version": "1.4.5",
   "name": "日期上下文插件",
-  "description": "提供 date/date_text/holiday 公开 API（仅今天）、query_date/query_holiday 工具（日期与特定节日查询），以及可选的模型请求日期注入（date.inject_on_model_request）",
+  "description": "提供 date/date_text/holiday 公开 API（仅今天）、query_date/query_holiday 工具（日期与特定节日查询），以及两个独立开关的模型请求前日期注入：回复模型（reply_injection）与 Planner（planner_injection），默认均关闭",
   "author": {
     "name": "xiexiaojia780",
     "url": "https://github.com/xiexiaojia780"
@@ -29,6 +29,11 @@
       "type": "python_package",
       "name": "chinese-calendar",
       "version_spec": ">=1.11.0"
+    },
+    {
+      "type": "python_package",
+      "name": "tzdata",
+      "version_spec": ">=2024.1"
     }
   ],
   "capabilities": [],

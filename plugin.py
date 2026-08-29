@@ -5,9 +5,16 @@
 - 公开 API ``holiday``：仅今天 的特定节日查询（可选按名称过滤）
 - LLM Tool ``query_date``：供模型查询昨天 / 今天 / 明天（或指定 ISO 日期）
 - LLM Tool ``query_holiday``：按名称查询特定节日（支持年份或具体日期）
-- 可选 Hook 注入：配置 ``date.inject_on_model_request`` 为 true 时，在模型请求前
-  向已有 system 消息之后插入日期轻量上下文（星期/节日/节气/调休，不含公历/农历日期）
-  （默认关闭，避免影响前缀缓存）
+- 可选 Hook 注入（WebUI 中两个独立分组、可分别开关，均默认关闭，避免影响前缀缓存）：
+  - ``reply_injection.enabled``：回复模型请求前注入（maisaka.replyer.before_model_request）
+  - ``planner_injection.enabled``：Planner 模型请求前注入（maisaka.planner.before_request）
+  - 两者均向已有 system 消息之后插入日期轻量上下文（星期/节日/节气/调休，不含公历/农历日期），
+    注入内容由「日期」分组的 include_* 开关统一控制
+
+命名规范（公开 API 与 LLM Tool 成对）：
+- 公开 API = 资源名：``date`` / ``date_text`` / ``holiday``
+- LLM Tool = ``query_`` + 同一资源词根：``query_date`` / ``query_holiday``
+- Tool 不与 API 直接同名：两者在 Host 组件表中曾因同名撞名，故 Tool 统一加 ``query_`` 前缀
 
 节日数据来源：
 - 农历日期、节气、传统节日落点：``cnlunar``
@@ -71,14 +78,14 @@ class PluginSectionConfig(PluginConfigBase):
         json_schema_extra={"label": "启用插件"},
     )
     config_version: str = Field(
-        default="1.4.0",
+        default="1.4.5",
         description="配置版本",
         json_schema_extra={"label": "配置版本"},
     )
 
 
 class DateInjectionConfig(PluginConfigBase):
-    """日期查询与可选注入配置"""
+    """日期内容设置（API/Tool/Hook 注入共用的信息源开关）"""
 
     __ui_label__ = "日期"
     __ui_icon__ = "calendar"
@@ -119,10 +126,39 @@ class DateInjectionConfig(PluginConfigBase):
         description="是否附带常见公历/西方节日（情人节/圣诞节等）",
         json_schema_extra={"label": "附带公历/西方节日"},
     )
-    inject_on_model_request: bool = Field(
+
+
+class ReplyInjectConfig(PluginConfigBase):
+    """回复模型请求前注入（独立开关；Hook: maisaka.replyer.before_model_request）
+
+    注入内容由「日期」分组的 include_* 开关控制，与此处开关相互独立。
+    """
+
+    __ui_label__ = "回复模型注入"
+    __ui_icon__ = "message-square"
+    __ui_order__ = 2
+
+    enabled: bool = Field(
         default=False,
-        description="是否在模型请求前自动注入日期轻量上下文（星期/节日/节气/调休，不含公历/农历日期；默认关闭；开启可能影响前缀缓存）",
-        json_schema_extra={"label": "模型请求前注入日期"},
+        description="是否在回复模型请求前自动注入日期轻量上下文（星期/节日/节气/调休，不含公历/农历日期；内容见「日期」分组；默认关闭；开启可能影响前缀缓存）",
+        json_schema_extra={"label": "回复模型请求前注入日期"},
+    )
+
+
+class PlannerInjectConfig(PluginConfigBase):
+    """Planner 模型请求前注入（独立开关；Hook: maisaka.planner.before_request）
+
+    注入内容由「日期」分组的 include_* 开关控制，与此处开关相互独立。
+    """
+
+    __ui_label__ = "Planner 注入"
+    __ui_icon__ = "compass"
+    __ui_order__ = 3
+
+    enabled: bool = Field(
+        default=False,
+        description="是否在 Planner 模型请求前自动注入日期轻量上下文（星期/节日/节气/调休，不含公历/农历日期；内容见「日期」分组；默认关闭；开启可能影响前缀缓存）",
+        json_schema_extra={"label": "Planner 请求前注入日期"},
     )
 
 
@@ -131,21 +167,24 @@ class DateContextPluginConfig(PluginConfigBase):
 
     plugin: PluginSectionConfig = Field(default_factory=PluginSectionConfig)
     date: DateInjectionConfig = Field(default_factory=DateInjectionConfig)
+    reply_injection: ReplyInjectConfig = Field(default_factory=ReplyInjectConfig)
+    planner_injection: PlannerInjectConfig = Field(default_factory=PlannerInjectConfig)
 
 
 class DateContextPlugin(DateContextAPIMixin, MaiBotPlugin):
-    """日期上下文插件（可选注入 + API 仅今天 + Tool 可查昨天/今天/明天）"""
+    """日期上下文插件（可选注入 replyer/planner + API 仅今天 + Tool 查日期/节日）"""
 
     config_model = DateContextPluginConfig
 
     async def on_load(self) -> None:
         """处理插件加载"""
-        inject = bool(getattr(self.config.date, "inject_on_model_request", False))
         self.ctx.logger.info(
-            "日期上下文插件已加载（inject_on_model_request=%s；"
-            "API: date/date_text/holiday（仅今天）；"
-            "Tool: query_date, query_holiday）"
-            % inject
+            "日期上下文插件已加载（回复模型注入=%s；Planner 注入=%s；"
+            "API: date/date_text/holiday（仅今天）；Tool: query_date, query_holiday）"
+            % (
+                bool(self.config.reply_injection.enabled),
+                bool(self.config.planner_injection.enabled),
+            )
         )
 
     async def on_unload(self) -> None:
@@ -160,13 +199,13 @@ class DateContextPlugin(DateContextAPIMixin, MaiBotPlugin):
     @HookHandler(
         "maisaka.replyer.before_model_request",
         name="inject_date_context",
-        description="可选：向模型请求注入日期轻量上下文（星期/节日/节气/调休）",
+        description="可选：向回复模型请求注入日期轻量上下文（星期/节日/节气/调休）",
         mode=HookMode.BLOCKING,
         order=HookOrder.NORMAL,
         error_policy=ErrorPolicy.SKIP,
     )
     async def inject_date(self, messages: Any = None, **kwargs: Any) -> dict[str, Any] | None:
-        """在已有 system 消息之后注入日期轻量上下文（星期/节日/节气/调休）（受配置开关控制）
+        """在回复模型请求的已有 system 消息之后注入日期轻量上下文（受配置开关控制）
 
         Args:
             messages: Host 传入的序列化消息列表
@@ -180,8 +219,53 @@ class DateContextPlugin(DateContextAPIMixin, MaiBotPlugin):
 
         if not self.config.plugin.enabled:
             return None
-        if not self.config.date.inject_on_model_request:
+        if not self.config.reply_injection.enabled:
             return None
+
+        return self._insert_context_into_messages(messages)
+
+    @HookHandler(
+        "maisaka.planner.before_request",
+        name="inject_date_context_planner",
+        description="可选：向 Planner 模型请求注入日期轻量上下文（星期/节日/节气/调休）",
+        mode=HookMode.BLOCKING,
+        order=HookOrder.NORMAL,
+        error_policy=ErrorPolicy.SKIP,
+    )
+    async def inject_date_planner(self, messages: Any = None, **kwargs: Any) -> dict[str, Any] | None:
+        """在 Planner 模型请求的已有 system 消息之后注入日期轻量上下文（受配置开关控制）
+
+        Planner Hook（maisaka.planner.before_request）的消息格式与回复 Hook 一致
+        （``[{"role": ..., "content": ...}, ...]``），因此复用同一注入逻辑与缓存。
+
+        Args:
+            messages: Host 传入的序列化 PromptMessage 列表
+            **kwargs: Hook 透传上下文（tool_definitions / session_id 等，不使用）
+
+        Returns:
+            dict | None: 改写后的 Hook 结果（modified_kwargs.messages）；未启用注入时返回 ``None``
+        """
+
+        del kwargs
+
+        if not self.config.plugin.enabled:
+            return None
+        if not self.config.planner_injection.enabled:
+            return None
+
+        return self._insert_context_into_messages(messages)
+
+    def _insert_context_into_messages(self, messages: Any) -> dict[str, Any] | None:
+        """把日期轻量上下文插入消息列表中已有 system 消息之后（replyer/planner 共用）。
+
+        Args:
+            messages: 序列化消息列表（``[{"role": ..., "content": ...}, ...]``）
+
+        Returns:
+            dict | None: ``{"action": "continue", "modified_kwargs": {"messages": [...]}}``；
+            消息列表非法时返回 ``None``（不改动）。
+        """
+
         if not isinstance(messages, list):
             return None
 
