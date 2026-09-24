@@ -4,7 +4,7 @@
 > **可选**在回复模型 / Planner 模型请求前注入日期轻量上下文（星期/节日/节气/调休，默认关闭）。
 
 - **插件 ID**：`github.xiexiaojia780.date-context-plugin`
-- **版本**：1.4.5
+- **版本**：1.4.6
 - **作者**：[xiexiaojia780](https://github.com/xiexiaojia780)
 - **License**：`GPL-3.0-or-later`（与 `_manifest.json` / 根目录 `LICENSE` 一致，GNU GPLv3）
 - **反馈**：[GitHub Issues](https://github.com/xiexiaojia780/date_context_plugin/issues)（发现 Bug 或有建议欢迎提 Issue）
@@ -49,10 +49,11 @@ date_context_plugin/
 | 值 | 行为 |
 |---|---|
 | `false`（默认） | **不注入**，不影响 prompt 前缀缓存 |
-| `true` | 在已有 system 消息之后插入日期上下文，仅含本周几/节日/节气/调休信息 |
+| `true` | 在已有 system 条目之后插入日期上下文，仅含本周几/节日/节气/调休信息 |
 
 - 两个开关**任意组合**：可以只开回复注入、只开 Planner 注入、都开或都关。
-- 注入内容相同，由「日期」分组的 `include_*` 开关统一控制；两个 Hook 的消息格式一致（`[{"role": ..., "content": ...}, ...]`），注入位置一致，共用同一天的注入缓存。
+- 注入内容相同，由「日期」分组的 `include_*` 开关统一控制；两个 Hook 的载荷格式一致，注入位置一致，共用同一天的注入缓存。
+- **载荷协议**：这两个 Hook 由 MaiBot 以 **ContextItem 快照协议**传递请求内容，不是 OpenAI 风格的 `messages` 列表。宿主传入 `items`（`{"item_type", "meta", "parts"}` 字典列表）与 `item_schema_version`，插件通过 `modified_kwargs` 回传同名键。`modified_kwargs` 会**整体替换**本次调用的 kwargs，因此其余参数需原样带回。键名写错不会报错，只会导致注入静默失效（1.4.6 修复的正是这个问题）。
 
 详细日期（公历、农历）需走 Tool `query_date`，Hook 保持轻量以最大程度降低对前缀缓存的影响。
 

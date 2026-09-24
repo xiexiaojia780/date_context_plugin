@@ -1,6 +1,6 @@
 {
   "manifest_version": 2,
-  "version": "1.4.5",
+  "version": "1.4.6",
   "name": "日期上下文插件",
   "description": "提供 date/date_text/holiday 公开 API（仅今天）、query_date/query_holiday 工具（日期与特定节日查询），以及两个独立开关的模型请求前日期注入：回复模型（reply_injection）与 Planner（planner_injection），默认均关闭",
   "author": {

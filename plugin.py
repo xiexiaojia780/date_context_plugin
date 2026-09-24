@@ -8,8 +8,16 @@
 - 可选 Hook 注入（WebUI 中两个独立分组、可分别开关，均默认关闭，避免影响前缀缓存）：
   - ``reply_injection.enabled``：回复模型请求前注入（maisaka.replyer.before_model_request）
   - ``planner_injection.enabled``：Planner 模型请求前注入（maisaka.planner.before_request）
-  - 两者均向已有 system 消息之后插入日期轻量上下文（星期/节日/节气/调休，不含公历/农历日期），
+  - 两者均向已有 system 条目之后插入日期轻量上下文（星期/节日/节气/调休，不含公历/农历日期），
     注入内容由「日期」分组的 include_* 开关统一控制
+
+Hook 载荷协议说明（重要）：
+这两个 Hook 由宿主以 **ContextItem 快照协议**传递请求内容，而不是 OpenAI 风格的
+``messages`` 列表。宿主传入 ``items``（形如
+``{"item_type", "meta", "parts"}`` 的字典列表）与 ``item_schema_version``，
+并要求处理器通过 ``modified_kwargs`` 回传**同名键**：``items`` + ``item_schema_version``。
+``modified_kwargs`` 会整体替换本次调用的 kwargs，因此其余参数需要原样带回。
+键名写错不会报错，只会导致注入静默失效。
 
 命名规范（公开 API 与 LLM Tool 成对）：
 - 公开 API = 资源名：``date`` / ``date_text`` / ``holiday``
@@ -25,6 +33,8 @@
 from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
+
+import uuid
 
 import cnlunar
 from chinese_calendar import get_holiday_detail, is_workday
@@ -204,25 +214,29 @@ class DateContextPlugin(DateContextAPIMixin, MaiBotPlugin):
         order=HookOrder.NORMAL,
         error_policy=ErrorPolicy.SKIP,
     )
-    async def inject_date(self, messages: Any = None, **kwargs: Any) -> dict[str, Any] | None:
-        """在回复模型请求的已有 system 消息之后注入日期轻量上下文（受配置开关控制）
+    async def inject_date(
+        self,
+        items: Any = None,
+        item_schema_version: Any = None,
+        **kwargs: Any,
+    ) -> dict[str, Any] | None:
+        """在回复模型请求的已有 system 条目之后注入日期轻量上下文（受配置开关控制）
 
         Args:
-            messages: Host 传入的序列化消息列表
-            **kwargs: Hook 透传上下文（不使用）
+            items: Host 传入的 ContextItem 快照列表
+            item_schema_version: Host 传入的 Item 协议版本，需原样回传
+            **kwargs: Hook 透传上下文（session_id / request_type 等，原样带回）
 
         Returns:
             dict | None: 改写后的 Hook 结果；未启用注入时返回 ``None``
         """
-
-        del kwargs
 
         if not self.config.plugin.enabled:
             return None
         if not self.config.reply_injection.enabled:
             return None
 
-        return self._insert_context_into_messages(messages)
+        return self._insert_context_into_items(items, item_schema_version, kwargs)
 
     @HookHandler(
         "maisaka.planner.before_request",
@@ -232,56 +246,88 @@ class DateContextPlugin(DateContextAPIMixin, MaiBotPlugin):
         order=HookOrder.NORMAL,
         error_policy=ErrorPolicy.SKIP,
     )
-    async def inject_date_planner(self, messages: Any = None, **kwargs: Any) -> dict[str, Any] | None:
-        """在 Planner 模型请求的已有 system 消息之后注入日期轻量上下文（受配置开关控制）
+    async def inject_date_planner(
+        self,
+        items: Any = None,
+        item_schema_version: Any = None,
+        **kwargs: Any,
+    ) -> dict[str, Any] | None:
+        """在 Planner 模型请求的已有 system 条目之后注入日期轻量上下文（受配置开关控制）
 
-        Planner Hook（maisaka.planner.before_request）的消息格式与回复 Hook 一致
-        （``[{"role": ..., "content": ...}, ...]``），因此复用同一注入逻辑与缓存。
+        Planner Hook（maisaka.planner.before_request）与回复 Hook 使用同一套
+        ContextItem 快照协议（``items`` + ``item_schema_version``），因此复用同一注入
+        逻辑与同一天内的文本缓存。
 
         Args:
-            messages: Host 传入的序列化 PromptMessage 列表
-            **kwargs: Hook 透传上下文（tool_definitions / session_id 等，不使用）
+            items: Host 传入的 ContextItem 快照列表
+            item_schema_version: Host 传入的 Item 协议版本，需原样回传
+            **kwargs: Hook 透传上下文（tool_definitions / session_id 等，原样带回）
 
         Returns:
-            dict | None: 改写后的 Hook 结果（modified_kwargs.messages）；未启用注入时返回 ``None``
+            dict | None: 改写后的 Hook 结果（modified_kwargs.items）；未启用注入时返回 ``None``
         """
-
-        del kwargs
 
         if not self.config.plugin.enabled:
             return None
         if not self.config.planner_injection.enabled:
             return None
 
-        return self._insert_context_into_messages(messages)
+        return self._insert_context_into_items(items, item_schema_version, kwargs)
 
-    def _insert_context_into_messages(self, messages: Any) -> dict[str, Any] | None:
-        """把日期轻量上下文插入消息列表中已有 system 消息之后（replyer/planner 共用）。
+    def _insert_context_into_items(
+        self,
+        items: Any,
+        item_schema_version: Any,
+        passthrough_kwargs: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """把日期轻量上下文作为新的 system 条目插入 items（replyer/planner 共用）。
+
+        ``modified_kwargs`` 会**整体替换**本次 Hook 调用的 kwargs，所以除了 ``items``
+        与 ``item_schema_version``，其余参数必须原样带回，否则会被一并丢弃。
 
         Args:
-            messages: 序列化消息列表（``[{"role": ..., "content": ...}, ...]``）
+            items: ContextItem 快照列表（``{"item_type", "meta", "parts"}``）
+            item_schema_version: Host 传入的 Item 协议版本，原样回传
+            passthrough_kwargs: 本次 Hook 收到的其他参数，原样回传
 
         Returns:
-            dict | None: ``{"action": "continue", "modified_kwargs": {"messages": [...]}}``；
-            消息列表非法时返回 ``None``（不改动）。
+            dict | None: ``{"action": "continue", "modified_kwargs": {...}}``；
+            载荷非法时返回 ``None``（不改动）。
         """
 
-        if not isinstance(messages, list):
+        if not isinstance(items, list):
             return None
 
         context_text = self._build_context_text()
 
-        # 在现有 system 消息之后插入，避免破坏缓存前缀
-        new_messages = list(messages)
+        # 新增一个独立的 system 条目。item_id 必须全局唯一；meta 的三个字段都是宿主
+        # 反序列化时的硬性要求（logical_turn_id 允许为 null，但键必须存在）。
+        injected_item: dict[str, Any] = {
+            "item_type": "SystemMessageItem",
+            "meta": {
+                "item_id": uuid.uuid4().hex,
+                "logical_turn_id": None,
+                "timestamp": datetime.now().isoformat(),
+            },
+            "parts": [{"type": "text", "text": context_text}],
+        }
+
+        # 在开头连续的 system 条目之后插入，避免破坏可缓存前缀
+        new_items = list(items)
         insert_pos = 0
-        for i, msg in enumerate(messages):
-            if isinstance(msg, dict) and msg.get("role") == "system":
-                insert_pos = i + 1
+        for index, item in enumerate(items):
+            if isinstance(item, dict) and item.get("item_type") == "SystemMessageItem":
+                insert_pos = index + 1
             else:
                 break
-        new_messages.insert(insert_pos, {"role": "system", "content": context_text})
+        new_items.insert(insert_pos, injected_item)
 
-        return {"action": "continue", "modified_kwargs": {"messages": new_messages}}
+        modified_kwargs: dict[str, Any] = dict(passthrough_kwargs)
+        modified_kwargs["items"] = new_items
+        # 必须回传版本号：宿主反序列化时会做等值校验，缺失或不匹配都会整体拒绝改动。
+        # 宿主未提供时按当前协议版本 1 兜底。
+        modified_kwargs["item_schema_version"] = item_schema_version if item_schema_version is not None else 1
+        return {"action": "continue", "modified_kwargs": modified_kwargs}
 
     def _build_context_text(self) -> str:
         """构造今天/昨天/明天的轻量上下文文本。
